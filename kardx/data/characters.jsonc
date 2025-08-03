@@ -1,0 +1,35 @@
+// data/characters.jsonc
+{
+  "player_balanced": {
+    "display_name": "Balanced Hero", // 用於顯示的名稱
+    "hp": 50,
+    "mana": 3,
+    "deck": {
+      "strike": 4,
+      "defend": 4,
+      "mana_crystal": 2
+    }
+  },
+  "player_glass_cannon": {
+    "display_name": "Glass Cannon", // 用於顯示的名稱
+    "hp": 35, // HP 較低
+    "mana": 3,
+    "deck": {
+      "strike": 2,
+      "defend": 5,
+      "glass_cannon": 5, // 更多攻擊牌
+      "mana_crystal": 2,
+      "shield_bash":3
+    }
+  },
+  "enemy_automaton": {
+    "display_name": "Automaton",
+    "hp": 40,
+    "mana": 3,
+    "deck": {
+      "strike": 6,
+      "defend": 3,
+      "glass_cannon": 1
+    }
+  }
+}

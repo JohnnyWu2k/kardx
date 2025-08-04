@@ -24,6 +24,11 @@ You can install Kard-X directly from PyPI with a single command:
 pip install kard-x
 ```
 
+or you can download and build it from this command:
+```bash
+pip install -e .
+```
+
 *Requires Python 3.10 or higher.*
 
 ## How to Play

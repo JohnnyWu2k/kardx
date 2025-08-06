@@ -5,7 +5,7 @@
 A minimalist, data-driven, text-based card battler that runs directly in your terminal.
 
  
-<!-- 提示：您可以將這張圖片替換為您自己遊戲的截圖 -->
+
 
 Welcome to Kard-X, a pure command-line interface (CLI) card game where strategy meets simplicity. Built with Python and designed for extensibility, Kard-X offers a classic deck-builder experience with a modern, tech-inspired feel.
 
@@ -26,7 +26,7 @@ pip install kard-x
 
 or you can download and build it from this command:
 ```bash
-pip install -e .
+python main.py
 ```
 
 *Requires Python 3.10 or higher.*
@@ -38,17 +38,6 @@ After installation, simply type the following command in your terminal to start 
 ```bash
 kardx
 ```
-
-### Troubleshooting: Command Not Found?
-
-If you run `kardx` and get an error like "command not found", it's likely that your Python Scripts directory isn't in your system's PATH.
-
-Don't worry! You can use this universal command instead, which works on all systems:
-
-```bash
-python -m kardx
-```
-This method directly asks your Python interpreter to find and run the `kardx` module, bypassing any PATH issues.
 
 ## Game Concept
 

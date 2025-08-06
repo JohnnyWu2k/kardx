@@ -1,0 +1,71 @@
+// data/cards.jsonc
+[
+  // Basic Cards
+  {
+    "id": "strike", "name": "Strike", "cost": 1, "type": "Attack",
+    "description": "Deal [6] damage.",
+    "effects": [{ "action": "deal_damage", "target": "enemy", "value": 6 }]
+  },
+  {
+    "id": "pierce", "name": "Pierce", "cost": 1, "type": "Attack",
+    "description": "Deal [4] true damage.",
+    "effects": [{ "action": "add_hp", "target": "enemy", "value": -4}]
+  },
+  {
+    "id": "double_strike", "name": "Double Strike", "cost": 2, "type": "Attack",
+    "description": "Deal [12] damage.",
+    "effects": [{ "action": "deal_damage", "target": "enemy", "value": 12 }]
+  },
+  {
+    "id": "triple_strike", "name": "Triple Strike", "cost": 3, "type": "Attack",
+    "description": "Deal [18] damage.",
+    "effects": [{ "action": "deal_damage", "target": "enemy", "value": 18 }]
+  },
+  {
+    "id": "defend", "name": "Defend", "cost": 1, "type": "Defense",
+    "description": "Gain [5] DEF.",
+    "effects": [{ "action": "add_def", "target": "self", "value": 5 }]
+  },
+  {
+    "id": "full_defend", "name": "Full Defend", "cost": 2, "type": "Defense",
+    "description": "Gain [10] DEF.",
+    "effects": [{ "action": "add_def", "target": "self", "value": 10 }]
+  },
+
+  
+  {
+    "id": "mana_gem", "name": "Mana Gem", "cost": 1, "type": "Power",
+    "description": "Mana +2.",
+    "effects": [{ "action": "add_mana", "target": "self", "value": 3 }]
+  },
+  {
+    "id": "mana_crystal", "name": "Mana Crystal", "cost": 1, "type": "Power",
+    "description": "Max Mana +2.",
+    "effects": [{ "action": "add_max_mana", "target": "self", "value": 2 }]
+  },
+  // Special Cards
+  {
+    "id": "glass_cannon", "name": "Glass Cannon", "cost": 4, "type": "Attack",
+    "description": "Deal [12] damage. Take [3] damage.",
+    "effects": [
+      { "action": "deal_damage", "target": "enemy", "value": 12 },
+      { "action": "deal_damage", "target": "self", "value": 3 }
+    ]
+  },
+  {
+    "id": "shield_bash", "name": "Shield Bash", "cost": 2, "type": "Attack",
+    "description": "Gain [8] DEF, then deal damage half of your current DEF.",
+    "effects": [
+      { "action": "add_def", "target": "self", "value": 8 },
+      { "action": "deal_damage", "target": "enemy", "value": "self.defend/2" }
+    ]
+  },
+  {
+    "id": "shield_strike", "name": "Shield Strike", "cost": 4, "type": "Attack",
+    "description": "Gain [16] DEF, then deal damage equal to your current DEF.",
+    "effects": [
+      { "action": "add_def", "target": "self", "value": 16 },
+      { "action": "deal_damage", "target": "enemy", "value": "self.defend" }
+    ]
+  }
+]

@@ -1,53 +1,67 @@
 # src/keyboard.py
 # A simple, cross-platform module for single-key presses.
+import sys
 
 try:
-    # For Windows
+    # --- Windows Implementation ---
     import msvcrt
     def get_key():
-        """Gets a single key press on Windows."""
-        # This will catch regular keys and the first byte of special keys
+        """Gets a single key press (blocking)."""
         key = msvcrt.getch()
-        # If it's a special key (like arrows), it sends two bytes.
-        # We check if there's more in the buffer to detect them.
         if key in b'\x00\xe0': # Special key prefix
-            # The second byte identifies the key (e.g., H for Up Arrow)
-            special_key = msvcrt.getch()
-            return special_key
+            return msvcrt.getch()
         return key
 
+    def get_key_non_blocking():
+        """Gets a single key press if one is available (non-blocking)."""
+        if msvcrt.kbhit():
+            return get_key() # Reuse the blocking logic to handle special keys
+        return None
+
 except ImportError:
-    # For Unix-like systems (Linux, macOS)
-    import sys
+    # --- Unix-like Systems Implementation (Linux, macOS) ---
     import tty
     import termios
+    import select
+    
     def get_key():
-        """Gets a single key press on Unix-like systems."""
+        """Gets a single key press (blocking)."""
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
         try:
             tty.setraw(sys.stdin.fileno())
-            # Read just one byte. Special keys are sent as sequences.
             key = sys.stdin.read(1)
-            # Arrow keys are sent as '\x1b[A' (Up), '\x1b[B' (Down), etc.
-            # We check for the escape sequence prefix.
-            if key == '\x1b':
-                # Read the next two characters of the sequence
+            if key == '\x1b': # Arrow key prefix
                 seq = sys.stdin.read(2)
-                if seq == '[A': return b'H' # Up Arrow
-                if seq == '[B': return b'K' # Down Arrow
-                if seq == '[C': return b'M' # Right Arrow
-                if seq == '[D': return b'P' # Left Arrow
-                return seq # Other escape sequences
+                if seq == '[A': return b'H' # Up
+                if seq == '[B': return b'P' # Down
+                if seq == '[C': return b'M' # Right
+                if seq == '[D': return b'K' # Left
+                return seq
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        return key.encode('utf-8') # Return as bytes for consistency
+        return key.encode('utf-8')
 
-# --- Key Constants ---
-# We use the bytes returned by Windows msvcrt for consistency.
-# Use these constants in the controller instead of raw characters.
+    def get_key_non_blocking():
+        """Gets a single key press if one is available (non-blocking)."""
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(sys.stdin.fileno())
+            # Check if there is data to be read
+            if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
+                # This part is tricky for multi-byte arrow keys in non-blocking mode.
+                # For simplicity, we'll read one char, which works for regular keys.
+                # A full solution would require a more complex state machine.
+                return sys.stdin.read(1).encode('utf-8')
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        return None
+
+
+# --- Key Constants (no changes) ---
 KEY_UP = b'H'
-KEY_DOWN = b'P' # Note: 'P' is often Down on Windows
+KEY_DOWN = b'P'
 KEY_LEFT = b'K'
 KEY_RIGHT = b'M'
 KEY_ENTER = b'\r'

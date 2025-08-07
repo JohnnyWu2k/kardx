@@ -15,7 +15,7 @@
   },
   "player_glass_cannon": {
     "display_name": "Glass Cannon", 
-    "hp": 35, 
+    "hp": 60, 
     "mana": 3,
     "deck": {
       "strike": 2,
@@ -27,7 +27,7 @@
   },
   "player_tolerance": {
     "display_name": "Tolerance", 
-    "hp": 80, 
+    "hp": 40, 
     "mana": 3,
     "deck": {
       "shield_strike":2,
@@ -49,6 +49,18 @@
       "mana_crystal": 2,
       "mana_gem": 3,
       "triple_strike":1
+    }
+  },
+  "enemy_bios": {
+    "display_name": "Bios",
+    "hp": 20,
+    "mana": 5,
+    "deck": {
+      "strike": 4,
+      "defend": 3,
+      "double_strike": 2,
+      "mana_crystal": 2,
+      "triple_strike":3
     }
   }
 }

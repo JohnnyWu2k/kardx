@@ -109,26 +109,41 @@ class Game:
                 events.append({'type': 'defend', 'target': eff_target_obj, 'value': value})
             
             elif action == "add_mana":
+                mana_before = eff_target_obj.mana
                 eff_target_obj.add_mana(value)
-                self._log(f"{eff_target_obj.name} gains {value} Mana.")
+                mana_gained = eff_target_obj.mana - mana_before
+                if mana_gained > 0:
+                    self._log(f"{eff_target_obj.name} gains {mana_gained} Mana.")
+                    events.append({'type': 'mana_gain', 'target': eff_target_obj, 'value': mana_gained})
+
             elif action == "add_max_mana":
                 eff_target_obj.add_max_mana(value)
                 self._log(f"{eff_target_obj.name}'s Max Mana is now {eff_target_obj.max_mana}.")
+                events.append({'type': 'max_mana_gain', 'target': eff_target_obj, 'value': value})
             else:
                 self._log(f"Warning: Unknown action '{action}' in card '{card.name}'")
         
         return events
 
+    ### MODIFIED: Battle now starts with both players drawing cards ###
     def start_battle(self):
-        # ... (no change) ...
+        """Initializes the battle state, including initial card draw."""
         if self.player and self.enemy:
             self.is_running = True
             self._log(f"A wild {self.enemy.name} appears!")
+            
+            # Both players draw their starting hands at the very beginning
+            self.player.draw_cards(5)
+            self.enemy.draw_cards(5)
+            self._log(f"{self.player.name} and {self.enemy.name} draw their starting hands.")
+
 
     def start_player_turn(self):
-        # ... (no change) ...
-        shuffled = self.player.start_turn(5)
-        if shuffled: self._log("Player's deck empty. Shuffling discard pile!")
+        """Prepares for the player's turn."""
+        # The hand limit is now passed to the player method
+        # We no longer need the initial draw here, as it's done in start_battle
+        # The start_turn method will handle refilling mana and resetting defend
+        self.player.start_turn(hand_limit=5)
         self._log(f"--- Player's Turn ---")
     
     def end_player_turn(self):
@@ -159,35 +174,32 @@ class Game:
         
         return "success", events
 
-    ### MODIFIED: Returns a list of all events that happened ###
-    def execute_enemy_turn(self) -> list[dict]:
-        """Runs enemy's turn logic and returns all animation events."""
-        if not self.is_running: return []
-
-        all_events = []
-        shuffled = self.enemy.start_turn(5)
-        if shuffled: self._log("Enemy's deck empty. Shuffling discard pile!")
+    ### REFACTORED: Enemy turn logic is now controller-driven ###
+    def start_enemy_turn(self):
+        """Only prepares the enemy's turn."""
+        if not self.is_running: return
+        self.enemy.start_turn(hand_limit=5)
         self._log(f"--- Enemy's Turn ---")
 
-        played_cards = 0
-        while self.is_running:
-            card_to_play = next((c for c in self.enemy.hand if self.enemy.mana >= c.cost), None)
-            
-            if card_to_play:
-                played_cards += 1
-                self.enemy.mana -= card_to_play.cost
-                self.enemy.hand.remove(card_to_play)
-                events = self._apply_effects(card_to_play, self.enemy, self.player)
-                all_events.extend(events) # Collect events
-                self.enemy.discard_pile.append(card_to_play)
-                
-                if self.player.hp <= 0:
-                    self.is_running = False
-                    self._log(f"{self.player.name} has been defeated!")
-            else:
-                if played_cards == 0:
-                    self._log(f"{self.enemy.name} has no playable cards.")
-                break
+    def get_enemy_playable_card(self) -> Card | None:
+        """Finds one playable card from the enemy's hand."""
+        if not self.is_running: return None
+        return next((c for c in self.enemy.hand if self.enemy.mana >= c.cost), None)
+
+    def play_enemy_card(self, card: Card) -> list[dict]:
+        """Executes a single enemy card play and returns animation events."""
+        if not self.is_running: return []
+        self.enemy.mana -= card.cost
+        self.enemy.hand.remove(card)
+        events = self._apply_effects(card, self.enemy, self.player)
+        self.enemy.discard_pile.append(card)
         
+        if self.player.hp <= 0:
+            self.is_running = False
+            self._log(f"{self.player.name} has been defeated!")
+        return events
+
+    def end_enemy_turn(self):
+        """Cleans up after the enemy's turn."""
+        if not self.is_running: return
         self.enemy.end_turn()
-        return all_events

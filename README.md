@@ -26,7 +26,7 @@ pip install kard-x
 
 or you can download and build it from this command:
 ```bash
-python main.py
+python -m src.main
 ```
 
 *Requires Python 3.10 or higher.*

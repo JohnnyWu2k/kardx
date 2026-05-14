@@ -1,11 +1,7 @@
-# src/main.py
-# The select_character function is now removed.
-from .app_controller import AppController
+"""Compatibility entry point for the old `python -m src.main` command."""
 
-def main():
-    """The single entry point for the application."""
-    app = AppController()
-    app.run()
+from .kardx.main import main
+
 
 if __name__ == "__main__":
     main()

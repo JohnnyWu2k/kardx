@@ -1,0 +1,1 @@
+"""Pause menu scene."""

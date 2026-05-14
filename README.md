@@ -24,20 +24,35 @@ You can install Kard-X directly from PyPI with a single command:
 pip install kard-x
 ```
 
-or you can download and build it from this command:
+For local development, install it from the repository in editable mode:
+
 ```bash
-python -m src.main
+python -m pip install -e .
 ```
 
 *Requires Python 3.10 or higher.*
 
 ## How to Play
 
-After installation, simply type the following command in your terminal to start the game:
+After installation, start the game with the console command:
 
 ```bash
 kardx
 ```
+
+You can also launch the installed package as a module:
+
+```bash
+python -m kardx
+```
+
+The old repository-only command still works as a compatibility shim:
+
+```bash
+python -m src.main
+```
+
+Editable card and character data is copied from the packaged defaults into your user data directory the first time you open a data file from the in-game editor. Restart the game after saving those files.
 
 ## Game Concept
 

@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kard-x"
+version = "0.1.0"
+description = "A minimalist, data-driven, text-based card battler for your terminal."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Kard-X contributors" }
+]
+dependencies = [
+  "json5>=0.9",
+  "wcwidth>=0.2"
+]
+
+[project.scripts]
+kardx = "kardx.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["kardx*", "src*"]
+
+[tool.setuptools.package-data]
+"kardx.data" = ["*.jsonc"]

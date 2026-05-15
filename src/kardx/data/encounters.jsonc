@@ -1,0 +1,43 @@
+{
+  "rat_passage": {
+    "room": "dungeon_room1",
+    "enemy": "enemy_giant_rat",
+    "label": "Giant Rat",
+    "repeatable": false,
+    "retreat_room": "dungeon_entrance",
+    "on_win": [
+      { "action": "set_flag", "flag": "rat_defeated" },
+      { "action": "complete_quest", "quest": "Explore the Old Well" },
+      { "action": "add_gold", "value": 10 },
+      { "action": "add_item", "item": "scrap", "value": 1 }
+    ],
+    "card_rewards": ["pierce", "first_aid", "double_strike"]
+  },
+  "ruin_guardian": {
+    "room": "ancient_ruins",
+    "enemy": "enemy_ancient_guardian",
+    "label": "Ancient Guardian",
+    "repeatable": false,
+    "retreat_room": "dungeon_room2",
+    "requires_flags": ["rat_defeated"],
+    "on_win": [
+      { "action": "set_flag", "flag": "ancient_guardian_defeated" },
+      { "action": "add_gold", "value": 25 },
+      { "action": "add_item", "item": "crystal_shard", "value": 2 }
+    ],
+    "card_rewards": ["mana_gem", "shield_bash", "repair_protocol"]
+  },
+  "forest_wolf": {
+    "room": "deep_forest",
+    "enemy": "enemy_forest_wolf",
+    "label": "Forest Wolf",
+    "repeatable": false,
+    "retreat_room": "forest_entrance",
+    "on_win": [
+      { "action": "set_flag", "flag": "forest_wolf_defeated" },
+      { "action": "add_item", "item": "healing_herb", "value": 2 },
+      { "action": "add_gold", "value": 12 }
+    ],
+    "card_rewards": ["first_aid", "full_defend", "blood_pact"]
+  }
+}

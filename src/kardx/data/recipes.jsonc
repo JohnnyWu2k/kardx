@@ -1,0 +1,32 @@
+{
+  "healing_potion": {
+    "name": "Healing Potion",
+    "description": "Brew a potion from herbs. It can be used from exploration.",
+    "requires": { "healing_herb": 2 },
+    "effects": [{ "action": "add_item", "item": "healing_potion", "value": 1 }]
+  },
+  "mana_gem": {
+    "name": "Mana Gem",
+    "description": "Turn salvage into a card that grants mana in battle.",
+    "requires": { "crystal_shard": 1, "scrap": 1 },
+    "effects": [{ "action": "add_card", "card": "mana_gem" }]
+  },
+  "double_strike": {
+    "name": "Double Strike",
+    "description": "Reinforce a Strike into Double Strike.",
+    "requires": { "wood": 1, "stone": 1 },
+    "effects": [{ "action": "upgrade_card", "from": "strike", "to": "double_strike" }]
+  },
+  "full_defend": {
+    "name": "Full Defend",
+    "description": "Reinforce a Defend into Full Defend.",
+    "requires": { "scrap": 2 },
+    "effects": [{ "action": "upgrade_card", "from": "defend", "to": "full_defend" }]
+  },
+  "shield_bash": {
+    "name": "Shield Bash",
+    "description": "Craft a defensive attack card from scrap and stone.",
+    "requires": { "scrap": 2, "stone": 1 },
+    "effects": [{ "action": "add_card", "card": "shield_bash" }]
+  }
+}

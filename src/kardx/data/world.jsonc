@@ -1,0 +1,154 @@
+{
+  "start": "cellar",
+  "rooms": {
+    "cellar": {
+      "name": "Damp Cellar",
+      "desc": "You wake in a cool, dim cellar. A rickety stairway leads north. A door east is ajar.",
+      "exits": { "north": "hall", "east": "storage" },
+      "items": []
+    },
+    "storage": {
+      "name": "Dusty Storage",
+      "desc": "Crates and old tools. Something glints between rags.",
+      "exits": { "west": "cellar" },
+      "items": ["key"],
+      "forage": [
+        { "item": "wood", "weight": 3 },
+        { "item": "stone", "weight": 2 }
+      ]
+    },
+    "hall": {
+      "name": "Stone Hall",
+      "desc": "A heavy iron gate blocks the way north. A sign points east: 'Shop'.",
+      "exits": { "south": "cellar", "east": "shop", "north": "outside" },
+      "locked_exits": {
+        "north": { "requires_item": "key", "message": "The iron gate is locked. Use a key here first." }
+      },
+      "items": []
+    },
+    "shop": {
+      "name": "Town Shop",
+      "desc": "A small counter and shelves. The clerk nods. A wooden sword lies here for practice.",
+      "exits": { "west": "hall", "east": "town_square" },
+      "items": ["wooden_sword"],
+      "talk": {
+        "clerk": {
+          "text": [
+            "Clerk: Cards are tools. Scrap and herbs can become useful combat scripts.",
+            "Clerk: Try 'forage', then 'craft mana_gem' or 'craft double_strike'."
+          ],
+          "effects": [{ "action": "set_flag", "flag": "heard_card_crafting_tip" }]
+        }
+      }
+    },
+    "outside": {
+      "name": "Outside",
+      "desc": "Moonlight and the scent of pine. Freedom lies beyond the gate.",
+      "exits": { "south": "hall", "north": "street_north" },
+      "items": [],
+      "forage": [
+        { "item": "wood", "weight": 2 },
+        { "item": "healing_herb", "weight": 1 }
+      ]
+    },
+    "street_north": {
+      "name": "North Street",
+      "desc": "Lanterns line the road. The town square lies further north.",
+      "exits": { "south": "outside", "north": "town_square", "west": "alley" },
+      "items": []
+    },
+    "alley": {
+      "name": "Narrow Alley",
+      "desc": "Stacked crates and discarded parts make this a decent salvage spot.",
+      "exits": { "east": "street_north" },
+      "items": [],
+      "forage": [
+        { "item": "scrap", "weight": 4 },
+        { "item": "stone", "weight": 1 }
+      ]
+    },
+    "town_square": {
+      "name": "Town Square",
+      "desc": "A fountain murmurs at the center. East stands city hall; north is an old well.",
+      "exits": { "south": "street_north", "east": "city_hall", "north": "well", "west": "shop" },
+      "items": []
+    },
+    "city_hall": {
+      "name": "City Hall",
+      "desc": "A notice board lists tasks. One asks for someone to explore the old well.",
+      "exits": { "west": "town_square" },
+      "items": [],
+      "talk": {
+        "mayor": {
+          "text": [
+            "Mayor: The well has gone noisy again. Clear it and the town will trade with you.",
+            "Quest accepted: Explore the Old Well."
+          ],
+          "effects": [
+            { "action": "set_flag", "flag": "quest_well_accepted" },
+            { "action": "start_quest", "quest": "Explore the Old Well" }
+          ]
+        }
+      }
+    },
+    "well": {
+      "name": "Old Well",
+      "desc": "An ancient stone well. A rope ladder descends into darkness.",
+      "exits": { "south": "town_square", "down": "dungeon_entrance" },
+      "items": []
+    },
+    "dungeon_entrance": {
+      "name": "Dungeon Entrance",
+      "desc": "Damp air rises from below. Scratches mark the walls.",
+      "exits": { "up": "well", "east": "dungeon_room1" },
+      "items": []
+    },
+    "dungeon_room1": {
+      "name": "Burrowed Passage",
+      "desc": "You hear chittering in the dark. Something moves.",
+      "exits": { "west": "dungeon_entrance", "east": "dungeon_room2" },
+      "items": []
+    },
+    "dungeon_room2": {
+      "name": "Collapsed Chamber",
+      "desc": "Rubble and stale air. A tarnished blade rests among stones.",
+      "exits": { "west": "dungeon_room1", "north": "ancient_ruins" },
+      "items": ["rusty_sword"],
+      "forage": [
+        { "item": "scrap", "weight": 2 },
+        { "item": "stone", "weight": 2 },
+        { "item": "crystal_shard", "weight": 1 }
+      ]
+    },
+    "ancient_ruins": {
+      "name": "Ancient Ruins",
+      "desc": "Crumbling stone surrounds a humming altar. It feels like a card forge before cards had names.",
+      "exits": { "south": "dungeon_room2", "east": "forest_entrance" },
+      "items": ["magic_tome"],
+      "forage": [
+        { "item": "crystal_shard", "weight": 3 },
+        { "item": "scrap", "weight": 1 }
+      ]
+    },
+    "forest_entrance": {
+      "name": "Forest Entrance",
+      "desc": "You emerge into a moonlit forest. Tall trees block most paths.",
+      "exits": { "west": "ancient_ruins", "north": "deep_forest" },
+      "items": [],
+      "forage": [
+        { "item": "wood", "weight": 2 },
+        { "item": "healing_herb", "weight": 2 }
+      ]
+    },
+    "deep_forest": {
+      "name": "Deep Forest",
+      "desc": "Dense woods with twisted paths. You hear low movement beyond the brush.",
+      "exits": { "south": "forest_entrance" },
+      "items": ["healing_herb"],
+      "forage": [
+        { "item": "healing_herb", "weight": 4 },
+        { "item": "wood", "weight": 1 }
+      ]
+    }
+  }
+}

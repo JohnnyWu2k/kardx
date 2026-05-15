@@ -30,7 +30,9 @@ class AppController:
             next_signal = self.active_scene_controller.run()
             
             # --- Simplified Scene Transition Logic ---
-            if isinstance(next_signal, str) and next_signal.startswith("player_"):
+            if next_signal is None:
+                self.active_scene_controller = MainMenuController()
+            elif isinstance(next_signal, str) and next_signal.startswith("player_"):
                 if self.pending_start_mode == "quick_battle":
                     self.active_scene_controller = self.start_game_session(next_signal)
                 else:

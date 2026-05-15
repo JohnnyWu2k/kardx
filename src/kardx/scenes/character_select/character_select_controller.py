@@ -20,14 +20,14 @@ class CharacterSelectController:
         ]
         return player_options
 
-    def run(self) -> str | None:
+    def run(self) -> str:
         """
         Runs the character selection loop.
-        Returns the chosen character ID string, or None if escaped.
+        Returns the chosen character ID string, or main_menu if escaped.
         """
         if not self.characters:
             print("No playable characters found!")
-            return None
+            return "main_menu"
 
         while True:
             self.view.display(self.selected_index)
@@ -40,4 +40,4 @@ class CharacterSelectController:
             elif key == KEY_ENTER:
                 return self.characters[self.selected_index]['id']
             elif key == KEY_ESC:
-                return None # Signal to go back
+                return "main_menu"

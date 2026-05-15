@@ -22,11 +22,14 @@ class Player:
         shuffled = False
         for _ in range(num_to_draw):
             if not self.deck:
-                # If deck is empty, DO NOT reshuffle discard pile.
-                # This enforces the finite deck rule.
-                break 
+                if not self.discard_pile:
+                    break
+                self.deck = list(self.discard_pile)
+                self.discard_pile.clear()
+                random.shuffle(self.deck)
+                shuffled = True
             self.hand.append(self.deck.pop())
-        return shuffled # This will likely always be False now, but we keep it for consistency.
+        return shuffled
 
     def start_turn(self, hand_limit: int = 5) -> bool:
         """
@@ -50,8 +53,8 @@ class Player:
 
     ### NEW: Method to check for loss condition ###
     def is_out_of_cards(self) -> bool:
-        """Check if the player has no cards left in hand or deck."""
-        return not self.deck and not self.hand
+        """Check if the player has no cards left anywhere."""
+        return not self.deck and not self.hand and not self.discard_pile
 
     # ... (take_damage, add_def, etc. are unchanged from the last correct version) ...
     def take_damage(self, amount: int) -> dict:

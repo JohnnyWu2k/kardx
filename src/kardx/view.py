@@ -79,7 +79,7 @@ class CLIView:
         print("-" * 30); print("\n")
 
         # Hand display...
-        print("--- Your Hand (←/→ to select, Enter to play, 'e' to end turn, Esc to quit) ---")
+        print("--- Your Hand (arrows to select, Enter to play, 'q' to discard, 'e' to end turn, Esc to quit) ---")
         if not player.hand: print("(Hand is empty)")
         else:
             card_art = [self._format_card(card, i == selected_index) for i, card in enumerate(player.hand)]

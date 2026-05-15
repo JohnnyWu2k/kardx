@@ -5,6 +5,7 @@ from .scenes.main_menu.menu_controller import MainMenuController
 from .scenes.game.game_controller import GameController
 from .scenes.character_select.character_select_controller import CharacterSelectController
 from .scenes.settings.settings_controller import SettingsController
+from .scenes.adventure.adventure_controller import AdventureController
 # Import the actual models and views needed for creation
 from .game_state import Game
 from .scenes.game.game_view import GameView
@@ -18,8 +19,10 @@ class AppController:
             GameController, 
             CharacterSelectController, 
             SettingsController,
+            AdventureController,
             EditorAppController # Now we only need to know about this one
         ]] = None
+        self.pending_start_mode = "adventure"
 
     def run(self):
         self.active_scene_controller = MainMenuController()
@@ -28,8 +31,15 @@ class AppController:
             
             # --- Simplified Scene Transition Logic ---
             if isinstance(next_signal, str) and next_signal.startswith("player_"):
-                self.active_scene_controller = self.start_game_session(next_signal)
-            elif next_signal == "start_game":
+                if self.pending_start_mode == "quick_battle":
+                    self.active_scene_controller = self.start_game_session(next_signal)
+                else:
+                    self.active_scene_controller = self.start_adventure_session(next_signal)
+            elif next_signal == "adventure_mode":
+                self.pending_start_mode = "adventure"
+                self.active_scene_controller = CharacterSelectController()
+            elif next_signal == "quick_battle":
+                self.pending_start_mode = "quick_battle"
                 self.active_scene_controller = CharacterSelectController()
             elif next_signal == "settings":
                 self.active_scene_controller = SettingsController()
@@ -49,6 +59,18 @@ class AppController:
                 self.active_scene_controller = MainMenuController()
         
         print("\nThanks for playing!")
+
+    def start_adventure_session(self, player_id: str) -> Union[AdventureController, MainMenuController]:
+        try:
+            return AdventureController(player_id=player_id)
+        except Exception as exc:
+            print("\n" + "="*50)
+            print("FATAL ERROR: Failed to initialize adventure mode.")
+            print(f"  - {exc}")
+            print("Please check adventures.jsonc, events.jsonc, relics.jsonc, and characters.jsonc.")
+            print("="*50)
+            input("Press Enter to return to the main menu...")
+            return MainMenuController()
 
     def start_game_session(self, player_id: str) -> Union[GameController, MainMenuController]:
         """Creates the Game model and, if successful, the GameController."""

@@ -1,0 +1,155 @@
+{
+  "default": {
+    "name": "Neon Ascent",
+    "starting_gold": 20,
+    "starting_card_limits": {
+      "mana_crystal": 2
+    },
+    "starting_card_replacements": {
+      "mana_crystal": "first_aid"
+    },
+    "card_rewards": [
+      "strike",
+      "pierce",
+      "double_strike",
+      "triple_strike",
+      "defend",
+      "full_defend",
+      "mana_gem",
+      "first_aid",
+      "repair_protocol",
+      "blood_pact",
+      "mana_crystal",
+      "glass_cannon",
+      "shield_bash",
+      "shield_strike"
+    ],
+    "shop_cards": [
+      "double_strike",
+      "full_defend",
+      "first_aid",
+      "repair_protocol",
+      "mana_gem",
+      "shield_bash",
+      "glass_cannon"
+    ],
+    "relic_rewards": [
+      "starter_battery",
+      "mirror_plate",
+      "blade_lens",
+      "repair_drone",
+      "discount_chip",
+      "training_core"
+    ],
+    "map_template": [
+      ["Battle", "Battle"],
+      ["Battle", "Event", "Battle"],
+      ["Rest", "Shop"],
+      ["Elite", "Battle", "Event"],
+      ["Battle", "Event", "Battle"],
+      ["Rest", "Shop"],
+      ["Elite", "Battle"],
+      ["Boss"]
+    ],
+    "node_pools": {
+      "Battle": [
+        {
+          "id": "scrap_patrol",
+          "type": "Battle",
+          "label": "Scrap Patrol",
+          "enemy": "enemy_automaton",
+          "gold": 12
+        },
+        {
+          "id": "bios_scouts",
+          "type": "Battle",
+          "label": "Bios Scouts",
+          "enemy": "enemy_bios",
+          "gold": 14
+        },
+        {
+          "id": "shield_sentry",
+          "type": "Battle",
+          "label": "Shield Sentry",
+          "enemy": "enemy_shield_sentry",
+          "gold": 13
+        },
+        {
+          "id": "mana_leech",
+          "type": "Battle",
+          "label": "Mana Leech",
+          "enemy": "enemy_mana_leech",
+          "gold": 15
+        }
+      ],
+      "Elite": [
+        {
+          "id": "bios_elite",
+          "type": "Elite",
+          "label": "Bios Prime",
+          "enemy": "enemy_bios_prime",
+          "gold": 22,
+          "relic": true
+        },
+        {
+          "id": "iron_warden",
+          "type": "Elite",
+          "label": "Iron Warden",
+          "enemy": "enemy_iron_warden",
+          "gold": 24,
+          "relic": true
+        }
+      ],
+      "Event": [
+        {
+          "id": "sealed_cache",
+          "type": "Event",
+          "label": "Sealed Cache",
+          "event": "sealed_cache"
+        },
+        {
+          "id": "broken_shrine",
+          "type": "Event",
+          "label": "Broken Shrine",
+          "event": "broken_shrine"
+        },
+        {
+          "id": "field_medic",
+          "type": "Event",
+          "label": "Field Medic",
+          "event": "field_medic"
+        },
+        {
+          "id": "card_forge",
+          "type": "Event",
+          "label": "Card Forge",
+          "event": "card_forge"
+        }
+      ],
+      "Shop": [
+        {
+          "id": "night_market",
+          "type": "Shop",
+          "label": "Night Market"
+        }
+      ],
+      "Rest": [
+        {
+          "id": "rest_station",
+          "type": "Rest",
+          "label": "Rest Station"
+        }
+      ],
+      "Boss": [
+        {
+          "id": "final_overseer",
+          "type": "Boss",
+          "label": "The Overseer",
+          "enemy": "enemy_overseer",
+          "gold": 50,
+          "relic": true
+        }
+      ]
+    }
+  }
+}

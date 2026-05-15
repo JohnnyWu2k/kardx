@@ -1,0 +1,92 @@
+{
+  "sealed_cache": {
+    "title": "Sealed Cache",
+    "text": "A humming crate is wired into the floor. The lock accepts blood heat or scrap credit.",
+    "options": [
+      {
+        "label": "Force it open (-6 HP, gain Mana Gem)",
+        "results": [
+          { "action": "add_hp", "value": -6 },
+          { "action": "add_card", "card": "mana_gem" },
+          { "action": "set_flag", "flag": "opened_cache" }
+        ]
+      },
+      {
+        "label": "Strip the wiring (+18 Gold)",
+        "results": [
+          { "action": "add_gold", "value": 18 },
+          { "action": "set_flag", "flag": "salvaged_cache" }
+        ]
+      }
+    ]
+  },
+  "broken_shrine": {
+    "title": "Broken Shrine",
+    "text": "A fractured combat shrine projects a training pattern you almost recognize.",
+    "options": [
+      {
+        "label": "Train with it (-4 HP, gain Shield Bash)",
+        "results": [
+          { "action": "add_hp", "value": -4 },
+          { "action": "add_card", "card": "shield_bash" },
+          { "action": "set_flag", "flag": "trained_at_shrine" }
+        ]
+      },
+      {
+        "label": "Take the offering (+10 Gold)",
+        "results": [
+          { "action": "add_gold", "value": 10 },
+          { "action": "set_flag", "flag": "took_shrine_offering" }
+        ]
+      }
+    ]
+  },
+  "field_medic": {
+    "title": "Field Medic",
+    "text": "A roaming medic offers help, but only if you choose what kind of weakness to expose.",
+    "options": [
+      {
+        "label": "Patch wounds (+10 HP, -8 Gold)",
+        "results": [
+          { "action": "add_hp", "value": 10 },
+          { "action": "add_gold", "value": -8 },
+          { "action": "set_flag", "flag": "paid_medic" }
+        ]
+      },
+      {
+        "label": "Trade a Strike for Full Defend",
+        "results": [
+          { "action": "upgrade_card", "from": "strike", "to": "full_defend" },
+          { "action": "set_flag", "flag": "learned_guard" }
+        ]
+      }
+    ]
+  },
+  "card_forge": {
+    "title": "Card Forge",
+    "text": "A hot terminal can rewrite one familiar combat script before it burns out.",
+    "options": [
+      {
+        "label": "Refine Strike into Double Strike",
+        "results": [
+          { "action": "upgrade_card", "from": "strike", "to": "double_strike" },
+          { "action": "set_flag", "flag": "forged_attack" }
+        ]
+      },
+      {
+        "label": "Refine Defend into Full Defend",
+        "results": [
+          { "action": "upgrade_card", "from": "defend", "to": "full_defend" },
+          { "action": "set_flag", "flag": "forged_guard" }
+        ]
+      },
+      {
+        "label": "Take loose scrap (+12 Gold)",
+        "results": [
+          { "action": "add_gold", "value": 12 },
+          { "action": "set_flag", "flag": "took_forge_scrap" }
+        ]
+      }
+    ]
+  }
+}

@@ -147,7 +147,7 @@ class GameView:
         top_lines.extend([
             self._divider(min(width, 30), "-"),
             "",
-            self._fit_line("--- Your Hand (<-/-> to select, Enter to play, 'e' to end turn, Esc to pause) ---", width),
+            self._fit_line("--- Your Hand (<-/-> select, Enter play, q discard, e end, Esc pause) ---", width),
         ])
 
         bottom_lines = [
@@ -197,16 +197,23 @@ class GameView:
         events,
         selected_index: int | None = None,
         on_tick: Callable[[int | None], int | None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> int | None:
         speed_mult = settings_manager.get("animation_speed_multiplier", 1.0)
         for step in self._animation_steps(events):
+            if should_stop and should_stop():
+                break
             if not on_tick:
                 self.display_board(player, enemy, action_log, animation_info=step)
                 time.sleep(step['duration'] * speed_mult)
                 continue
             deadline = time.monotonic() + step['duration'] * speed_mult
             while True:
+                if should_stop and should_stop():
+                    return selected_index
                 selected_index = on_tick(selected_index)
+                if should_stop and should_stop():
+                    return selected_index
                 self.display_board(
                     player,
                     enemy,

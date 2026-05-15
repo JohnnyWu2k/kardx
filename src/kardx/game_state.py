@@ -7,11 +7,30 @@ from .player import Player
 
 class Game:
     # __init__, _load_data, _create_character, _log, _evaluate_expression remain the same...
-    def __init__(self, player_id: str, enemy_id: str):
+    def __init__(
+        self,
+        player_id: str,
+        enemy_id: str,
+        player_deck_ids: list[str] | None = None,
+        player_hp: int | None = None,
+        player_max_hp: int | None = None,
+        player_base_mana: int | None = None,
+        battle_modifiers: dict[str, int] | None = None,
+    ):
         self.all_cards = self._load_data("cards.jsonc")
         self.character_definitions = self._load_data("characters.jsonc")
-        self.player = self._create_character(player_id)
+        self.battle_modifiers = battle_modifiers or {}
+        self.first_attack_bonus_used = False
+        self.player = self._create_character(
+            player_id,
+            deck_override=player_deck_ids,
+            hp_override=player_max_hp,
+            mana_override=player_base_mana,
+            max_mana_bonus=self.battle_modifiers.get("max_mana_bonus", 0),
+        )
         self.enemy = self._create_character(enemy_id)
+        if self.player and player_hp is not None:
+            self.player.set_hp(player_hp)
         self.is_running = False
         self.action_log = deque(maxlen=5)
 
@@ -21,14 +40,33 @@ class Game:
         if filename == "cards.jsonc": return {item['id']: Card(**item) for item in data}
         return data
 
-    def _create_character(self, character_id: str) -> Player | None:
+    def _create_character(
+        self,
+        character_id: str,
+        deck_override: list[str] | None = None,
+        hp_override: int | None = None,
+        mana_override: int | None = None,
+        max_mana_bonus: int = 0,
+    ) -> Player | None:
         char_def = self.character_definitions.get(character_id)
         if not char_def: print(f"ERROR: Character '{character_id}' not found."); return None
         deck = []
-        for card_id, count in char_def.get("deck", {}).items():
-            if card_id in self.all_cards: deck.extend([self.all_cards[card_id]] * count)
-            else: print(f"Warning: Card '{card_id}' not found.")
-        return Player(name=char_def.get("display_name", "Unknown"), hp=char_def.get("hp", 10), mana=char_def.get("mana", 3), deck=deck)
+        if deck_override is not None:
+            for card_id in deck_override:
+                if card_id in self.all_cards: deck.append(self.all_cards[card_id])
+                else: print(f"Warning: Card '{card_id}' not found.")
+        else:
+            for card_id, count in char_def.get("deck", {}).items():
+                if card_id in self.all_cards: deck.extend([self.all_cards[card_id]] * count)
+                else: print(f"Warning: Card '{card_id}' not found.")
+        hp = hp_override if hp_override is not None else char_def.get("hp", 10)
+        mana = mana_override if mana_override is not None else char_def.get("mana", 3)
+        return Player(
+            name=char_def.get("display_name", "Unknown"),
+            hp=hp,
+            mana=mana + max_mana_bonus,
+            deck=deck,
+        )
     
     def _log(self, message: str):
         self.action_log.append(message)
@@ -68,6 +106,17 @@ class Game:
             action = effect.get("action")
 
             if action == "deal_damage":
+                if (
+                    source == self.player
+                    and eff_target_obj == self.enemy
+                    and card.type == "Attack"
+                    and not self.first_attack_bonus_used
+                    and self.battle_modifiers.get("first_attack_damage_bonus", 0) > 0
+                ):
+                    bonus = self.battle_modifiers["first_attack_damage_bonus"]
+                    value += bonus
+                    self.first_attack_bonus_used = True
+                    self._log(f"Relic power adds {bonus} damage.")
                 # Get the detailed report from the method that actually changes the state
                 damage_report = eff_target_obj.take_damage(value)
                 damage_done = damage_report['dealt']
@@ -131,8 +180,10 @@ class Game:
             self._log(f"A wild {self.enemy.name} appears!")
             
             # Both players draw their starting hands at the very beginning
-            self.player.draw_cards(5)
-            self.enemy.draw_cards(5)
+            if self.player.draw_cards(5):
+                self._log(f"{self.player.name} reshuffles their discard into deck.")
+            if self.enemy.draw_cards(5):
+                self._log(f"{self.enemy.name} reshuffles their discard into deck.")
             self._log(f"{self.player.name} and {self.enemy.name} draw their starting hands.")
 
 
@@ -141,7 +192,12 @@ class Game:
         # The hand limit is now passed to the player method
         # We no longer need the initial draw here, as it's done in start_battle
         # The start_turn method will handle refilling mana and resetting defend
-        self.player.start_turn(hand_limit=5)
+        if self.player.start_turn(hand_limit=5):
+            self._log(f"{self.player.name} reshuffles their discard into deck.")
+        start_def_bonus = self.battle_modifiers.get("start_def_bonus", 0)
+        if start_def_bonus > 0:
+            self.player.add_def(start_def_bonus)
+            self._log(f"Relic power grants {start_def_bonus} DEF.")
         self._log(f"--- Player's Turn ---")
     
     def end_player_turn(self):
@@ -172,11 +228,20 @@ class Game:
         
         return "success", events
 
+    def discard_player_card(self, card_index: int) -> str:
+        """Discards a card from the player's hand without playing it."""
+        discarded = self.player.discard_card(card_index)
+        if not discarded:
+            return "invalid_card"
+        self._log(f"{self.player.name} discards '{discarded.name}'.")
+        return "success"
+
     ### REFACTORED: Enemy turn logic is now controller-driven ###
     def start_enemy_turn(self):
         """Only prepares the enemy's turn."""
         if not self.is_running: return
-        self.enemy.start_turn(hand_limit=5)
+        if self.enemy.start_turn(hand_limit=5):
+            self._log(f"{self.enemy.name} reshuffles their discard into deck.")
         self._log(f"--- Enemy's Turn ---")
 
     def get_enemy_playable_card(self) -> Card | None:

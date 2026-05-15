@@ -5,7 +5,14 @@ from ...keyboard import get_key, KEY_UP, KEY_DOWN, KEY_ENTER, KEY_ESC
 class EditorMenuController:
     """Handles logic for the editor's main menu."""
     def __init__(self):
-        self.options = ["Edit Characters", "Edit Cards", "Back to Main Menu"]
+        self.options = [
+            "Edit Characters",
+            "Edit Cards",
+            "Edit Adventures",
+            "Edit Events",
+            "Edit Relics",
+            "Back to Main Menu",
+        ]
         self.view = EditorMenuView(self.options)
         self.selected_index = 0
 
@@ -27,5 +34,11 @@ class EditorMenuController:
                     return "character_editor" # New signal
                 elif chosen_option == "Edit Cards":
                     return "card_editor" # New signal
+                elif chosen_option == "Edit Adventures":
+                    return "adventure_editor"
+                elif chosen_option == "Edit Events":
+                    return "event_editor"
+                elif chosen_option == "Edit Relics":
+                    return "relic_editor"
                 elif chosen_option == "Back to Main Menu":
                     return "main_menu"

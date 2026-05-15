@@ -14,7 +14,10 @@ Welcome to Kard-X, a pure command-line interface (CLI) card game where strategy 
 -   **Purely Text-Based:** Enjoy a clean, distraction-free, and retro-cool gaming experience in your terminal.
 -   **Data-Driven Design:** All cards and characters are defined in simple `.jsonc` files. Modifying the game or creating new content is as easy as editing a text file!
 -   **Strategic Depth:** Manage your Health (HP), Defense (DEF), and Mana to outwit your opponent. Grow stronger by permanently increasing your Max Mana.
--   **Infinite Replayability:** A robust card-cycling system ensures the battle never ends. Choose from different hero archetypes and face unique enemies.
+-   **Adventure Mode:** Choose routes through a multi-node run with battles, events, shops, rest sites, elites, and a final boss.
+-   **Run Progression:** Carry HP, Gold, deck changes, relics, defeated enemies, and event outcomes across an adventure.
+-   **Rarity-Aware Rewards:** Card rewards favor common tools, with rare scaling cards like `Mana Crystal` appearing less often.
+-   **Infinite Replayability:** Choose from different hero archetypes, shape your deck, and face unique enemies.
 
 ## Installation
 
@@ -56,7 +59,7 @@ Editable card and character data is copied from the packaged defaults into your 
 
 ## Game Concept
 
-The game starts with a Character Selection screen. Each character begins with a unique starting deck.
+The main menu offers Adventure Mode for a full route-based run and Quick Battle for the classic single fight. Each character begins with a unique starting deck.
 
 -   **Objective:** Reduce the enemy's HP to zero.
 -   **Turns:** Each turn, you draw 5 cards and your Mana is refilled. Play cards by spending Mana.
@@ -64,16 +67,27 @@ The game starts with a Character Selection screen. Each character begins with a 
     -   **Attack:** Deal damage to the enemy.
     -   **Defense:** Gain DEF to block incoming damage for one turn.
     -   **Power:** Play cards like `Mana Crystal` to permanently increase your Max Mana, enabling more powerful combos in later turns.
--   **Deck Cycling:** When your draw pile is empty, your discard pile is automatically shuffled back into it, allowing you to use your cards indefinitely.
+-   **Deck Cycling:** Played cards go to discard. When the draw deck runs out, the discard pile is shuffled back into the deck.
+-   **Adventure Nodes:** Routes are generated from editable node pools with controlled pacing. Early routes build your deck, shops and rest sites appear before major difficulty jumps, elites can grant relics, and events can upgrade cards or reshape resources.
+
+## Editable Content
+
+The Content Editor can open the game's editable JSONC files:
+
+-   `cards.jsonc` for card definitions.
+-   `characters.jsonc` for playable characters and enemies.
+-   `adventures.jsonc` for route maps and reward pools.
+-   `events.jsonc` for non-combat choices.
+-   `relics.jsonc` for passive run modifiers.
 
 ## Roadmap (Future Development)
 
 Kard-X is built to be expanded. Here's what's planned for the future:
 
--   [ ] **Card Reward System:** Gain new cards after winning a battle.
--   [ ] **More Enemies & Bosses:** Introduce enemies with unique AI and abilities.
--   [ ] **Relics & Artifacts:** Add passive items that grant special bonuses.
--   [ ] **Event System:** Encounter non-combat events that offer choices and consequences.
+-   [x] **Card Reward System:** Gain new cards after winning a battle.
+-   [x] **More Enemies & Bosses:** Introduce enemies with unique AI and abilities.
+-   [x] **Relics & Artifacts:** Add passive items that grant special bonuses.
+-   [x] **Event System:** Encounter non-combat events that offer choices and consequences.
 -   [ ] **Color Support:** Using libraries like `colorama` or `rich` to enhance the UI.
 
 

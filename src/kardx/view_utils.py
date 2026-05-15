@@ -49,7 +49,7 @@ def render_screen(lines: list[str]):
         padding = " " * max(0, term_width - get_visible_len(fitted))
         visible_lines.append(fitted + padding)
     output = "\n".join(visible_lines)
-    sys.stdout.write("\033[?25l\033[H" + output + "\033[J")
+    sys.stdout.write("\033[?25l\033[H\033[J" + output)
     sys.stdout.flush()
 
 

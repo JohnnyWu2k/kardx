@@ -10,6 +10,7 @@ class Card:
     type: str
     description: str
     effects: list[dict] = field(default_factory=list)
+    rarity: str = "common"
 
     def __repr__(self) -> str:
         return f"{self.name} (費用:{self.cost})"

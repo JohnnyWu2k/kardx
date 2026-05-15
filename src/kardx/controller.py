@@ -1,7 +1,7 @@
 # src/controller.py
 from .game_state import Game
 from .view import CLIView
-from .keyboard import get_key, KEY_LEFT, KEY_RIGHT, KEY_ENTER, KEY_ESC, KEY_E
+from .keyboard import get_key, KEY_LEFT, KEY_RIGHT, KEY_ENTER, KEY_ESC, KEY_E, KEY_Q
 
 class GameController:
     """Handles user input, animations, and drives the game forward."""
@@ -23,9 +23,7 @@ class GameController:
             if not self.game.is_running:
                 break
             
-            # The enemy turn logic is now cleaner
-            enemy_events = self.game.execute_enemy_turn()
-            self.view.play_animation(self.game.player, self.game.enemy, self.game.action_log, enemy_events)
+            self.execute_enemy_turn()
 
         # After the loop (game over)
         self.view.display_board(self.game.player, self.game.enemy, self.game.action_log)
@@ -35,7 +33,7 @@ class GameController:
     def handle_player_turn(self):
         """The event loop for a single player turn."""
         self.game.start_player_turn()
-        self.selected_card_index = 0 if self.game.player.hand else -1
+        self._normalize_selected_card_index()
 
         # Initial draw for the turn, no animation yet
         self.view.display_board(
@@ -78,6 +76,12 @@ class GameController:
                         # We can add a "shake" or "error" animation here in the future
                         pass
 
+            elif key == KEY_Q:
+                if self.selected_card_index != -1:
+                    status = self.game.discard_player_card(self.selected_card_index)
+                    if status == "success":
+                        self._normalize_selected_card_index()
+                        action_taken = True
 
             elif key == KEY_E:
                 self.game.end_player_turn()
@@ -95,3 +99,24 @@ class GameController:
                     self.game.action_log,
                     selected_index=self.selected_card_index
                 )
+
+    def _normalize_selected_card_index(self):
+        if not self.game.player.hand:
+            self.selected_card_index = -1
+            return
+        if self.selected_card_index < 0:
+            self.selected_card_index = 0
+            return
+        self.selected_card_index = min(self.selected_card_index, len(self.game.player.hand) - 1)
+
+    def execute_enemy_turn(self):
+        if not self.game.is_running:
+            return
+        self.game.start_enemy_turn()
+        while self.game.is_running:
+            card_to_play = self.game.get_enemy_playable_card()
+            if not card_to_play:
+                break
+            events = self.game.play_enemy_card(card_to_play)
+            self.view.play_animation(self.game.player, self.game.enemy, self.game.action_log, events)
+        self.game.end_enemy_turn()

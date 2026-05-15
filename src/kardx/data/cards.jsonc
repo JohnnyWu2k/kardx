@@ -19,7 +19,8 @@
   {
     "id": "triple_strike", "name": "Triple Strike", "cost": 3, "type": "Attack",
     "description": "Deal [18] damage.",
-    "effects": [{ "action": "deal_damage", "target": "enemy", "value": 18 }]
+    "effects": [{ "action": "deal_damage", "target": "enemy", "value": 18 }],
+    "rarity": "uncommon"
   },
   {
     "id": "defend", "name": "Defend", "cost": 1, "type": "Defense",
@@ -29,7 +30,8 @@
   {
     "id": "full_defend", "name": "Full Defend", "cost": 2, "type": "Defense",
     "description": "Gain [10] DEF.",
-    "effects": [{ "action": "add_def", "target": "self", "value": 10 }]
+    "effects": [{ "action": "add_def", "target": "self", "value": 10 }],
+    "rarity": "uncommon"
   },
 
   
@@ -41,7 +43,32 @@
   {
     "id": "mana_crystal", "name": "Mana Crystal", "cost": 1, "type": "Power",
     "description": "Max Mana +2.",
-    "effects": [{ "action": "add_max_mana", "target": "self", "value": 2 }]
+    "effects": [{ "action": "add_max_mana", "target": "self", "value": 2 }],
+    "rarity": "rare"
+  },
+  // Healing Cards
+  {
+    "id": "first_aid", "name": "First Aid", "cost": 1, "type": "Recovery",
+    "description": "Restore [6] HP.",
+    "effects": [{ "action": "add_hp", "target": "self", "value": 6 }]
+  },
+  {
+    "id": "repair_protocol", "name": "Repair Protocol", "cost": 2, "type": "Recovery",
+    "description": "Restore [9] HP. Gain [3] DEF.",
+    "effects": [
+      { "action": "add_hp", "target": "self", "value": 9 },
+      { "action": "add_def", "target": "self", "value": 3 }
+    ],
+    "rarity": "uncommon"
+  },
+  {
+    "id": "blood_pact", "name": "Blood Pact", "cost": 0, "type": "Recovery",
+    "description": "Restore [4] HP, then lose [1] Max Mana.",
+    "effects": [
+      { "action": "add_hp", "target": "self", "value": 4 },
+      { "action": "add_max_mana", "target": "self", "value": -1 }
+    ],
+    "rarity": "rare"
   },
   // Special Cards
   {
@@ -50,7 +77,8 @@
     "effects": [
       { "action": "deal_damage", "target": "enemy", "value": 12 },
       { "action": "deal_damage", "target": "self", "value": 3 }
-    ]
+    ],
+    "rarity": "uncommon"
   },
   {
     "id": "shield_bash", "name": "Shield Bash", "cost": 2, "type": "Attack",
@@ -58,7 +86,8 @@
     "effects": [
       { "action": "add_def", "target": "self", "value": 8 },
       { "action": "deal_damage", "target": "enemy", "value": "self.defend/2" }
-    ]
+    ],
+    "rarity": "uncommon"
   },
   {
     "id": "shield_strike", "name": "Shield Strike", "cost": 4, "type": "Attack",
@@ -66,6 +95,7 @@
     "effects": [
       { "action": "add_def", "target": "self", "value": 16 },
       { "action": "deal_damage", "target": "enemy", "value": "self.defend" }
-    ]
+    ],
+    "rarity": "rare"
   }
 ]

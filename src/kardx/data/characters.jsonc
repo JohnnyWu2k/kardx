@@ -10,7 +10,8 @@
       "double_strike": 2,
       "triple_strike":1,
       "defend": 4,
-      "mana_crystal": 4
+      "mana_crystal": 2,
+      "first_aid": 2
     }
   },
   "player_glass_cannon": {
@@ -21,8 +22,9 @@
       "strike": 2,
       "defend": 5,
       "glass_cannon": 5, 
-      "mana_crystal": 2,
-      "shield_bash":3
+      "mana_crystal": 1,
+      "shield_bash":3,
+      "first_aid": 1
     }
   },
   "player_tolerance": {
@@ -32,9 +34,10 @@
     "deck": {
       "shield_strike":2,
       "defend": 8,
-      "mana_crystal": 2,
+      "mana_crystal": 1,
       "mana_gem": 3,
-      "shield_bash":5
+      "shield_bash":5,
+      "repair_protocol": 1
     }
   },
   "enemy_automaton": {
@@ -61,6 +64,71 @@
       "double_strike": 2,
       "mana_crystal": 2,
       "triple_strike":3
+    }
+  },
+  "enemy_shield_sentry": {
+    "display_name": "Shield Sentry",
+    "hp": 34,
+    "mana": 3,
+    "deck": {
+      "strike": 4,
+      "defend": 6,
+      "full_defend": 2,
+      "shield_bash": 2,
+      "mana_gem": 1
+    }
+  },
+  "enemy_mana_leech": {
+    "display_name": "Mana Leech",
+    "hp": 30,
+    "mana": 4,
+    "deck": {
+      "pierce": 4,
+      "defend": 3,
+      "mana_gem": 4,
+      "mana_crystal": 1,
+      "double_strike": 2
+    }
+  },
+  "enemy_bios_prime": {
+    "display_name": "Bios Prime",
+    "hp": 48,
+    "mana": 4,
+    "deck": {
+      "strike": 4,
+      "pierce": 2,
+      "defend": 4,
+      "double_strike": 3,
+      "mana_gem": 2,
+      "shield_bash": 2
+    }
+  },
+  "enemy_iron_warden": {
+    "display_name": "Iron Warden",
+    "hp": 58,
+    "mana": 4,
+    "deck": {
+      "strike": 4,
+      "defend": 5,
+      "full_defend": 3,
+      "shield_bash": 3,
+      "shield_strike": 1,
+      "mana_gem": 2
+    }
+  },
+  "enemy_overseer": {
+    "display_name": "The Overseer",
+    "hp": 70,
+    "mana": 5,
+    "deck": {
+      "strike": 4,
+      "pierce": 3,
+      "double_strike": 3,
+      "triple_strike": 2,
+      "defend": 4,
+      "full_defend": 2,
+      "mana_gem": 2,
+      "shield_strike": 2
     }
   }
 }

@@ -54,15 +54,58 @@ def load_packaged_json5_data(filename: str) -> dict | list | None:
         return None
 
 
+def merge_game_data(base: dict | list | None, override: dict | list | None) -> dict | list | None:
+    """Merge editable user data over packaged defaults when the structure supports it."""
+    if override is None:
+        return base
+    if base is None:
+        return override
+    if isinstance(base, dict) and isinstance(override, dict):
+        merged = dict(base)
+        for key, value in override.items():
+            if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+                merged[key] = merge_game_data(merged[key], value)
+            else:
+                merged[key] = value
+        return merged
+    if isinstance(base, list) and isinstance(override, list):
+        base_items_by_id = {
+            item.get("id"): item
+            for item in base
+            if isinstance(item, dict) and item.get("id")
+        }
+        override_items_by_id = {
+            item.get("id"): item
+            for item in override
+            if isinstance(item, dict) and item.get("id")
+        }
+        if len(base_items_by_id) == len(base) and len(override_items_by_id) == len(override):
+            merged = []
+            seen = set()
+            for item in base:
+                item_id = item["id"]
+                if item_id in override_items_by_id:
+                    merged.append(merge_game_data(item, override_items_by_id[item_id]))
+                else:
+                    merged.append(item)
+                seen.add(item_id)
+            for item in override:
+                if item["id"] not in seen:
+                    merged.append(item)
+            return merged
+    return override
+
+
 def load_game_data(filename: str) -> dict | list | None:
     """Load user-edited data when present, otherwise fall back to packaged data."""
+    packaged_data = load_packaged_json5_data(filename)
     user_path = get_user_data_path(filename)
     if user_path.exists():
-        return load_json5_data(user_path)
+        return merge_game_data(packaged_data, load_json5_data(user_path))
     fallback_path = get_fallback_data_dir() / filename
     if fallback_path.exists():
-        return load_json5_data(fallback_path)
-    return load_packaged_json5_data(filename)
+        return merge_game_data(packaged_data, load_json5_data(fallback_path))
+    return packaged_data
 
 
 def ensure_editable_data_file(filename: str) -> Path:

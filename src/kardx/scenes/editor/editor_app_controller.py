@@ -4,6 +4,7 @@ from typing import Optional, Union
 from .editor_menu_controller import EditorMenuController
 from .card_editor_controller import CardEditorController
 from .character_editor_controller import CharacterEditorController
+from .data_file_editor_controller import DataFileEditorController
 
 class EditorAppController:
     """The main controller for the entire editor subsystem."""
@@ -11,7 +12,8 @@ class EditorAppController:
         self.active_scene_controller: Optional[Union[
             EditorMenuController,
             CardEditorController,
-            CharacterEditorController
+            CharacterEditorController,
+            DataFileEditorController,
         ]] = None
 
     def run(self) -> str:
@@ -31,6 +33,12 @@ class EditorAppController:
                 self.active_scene_controller = CharacterEditorController()
             elif next_signal == "card_editor":
                 self.active_scene_controller = CardEditorController()
+            elif next_signal == "adventure_editor":
+                self.active_scene_controller = DataFileEditorController("adventures.jsonc", "adventure")
+            elif next_signal == "event_editor":
+                self.active_scene_controller = DataFileEditorController("events.jsonc", "event")
+            elif next_signal == "relic_editor":
+                self.active_scene_controller = DataFileEditorController("relics.jsonc", "relic")
             elif next_signal == "editor_menu":
                 self.active_scene_controller = EditorMenuController()
             elif next_signal == "main_menu":

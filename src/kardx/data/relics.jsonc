@@ -1,0 +1,44 @@
+{
+  "starter_battery": {
+    "name": "Starter Battery",
+    "description": "Start each battle with +1 Max Mana.",
+    "effects": [
+      { "action": "battle_max_mana", "value": 1 }
+    ]
+  },
+  "mirror_plate": {
+    "name": "Mirror Plate",
+    "description": "Start each player turn with +3 DEF.",
+    "effects": [
+      { "action": "battle_start_def", "value": 3 }
+    ]
+  },
+  "blade_lens": {
+    "name": "Blade Lens",
+    "description": "The first Attack card each battle deals +2 damage.",
+    "effects": [
+      { "action": "first_attack_damage", "value": 2 }
+    ]
+  },
+  "repair_drone": {
+    "name": "Repair Drone",
+    "description": "Heal 3 HP after each won battle.",
+    "effects": [
+      { "action": "after_battle_heal", "value": 3 }
+    ]
+  },
+  "discount_chip": {
+    "name": "Discount Chip",
+    "description": "Shop prices are reduced by 5 Gold.",
+    "effects": [
+      { "action": "shop_discount", "value": 5 }
+    ]
+  },
+  "training_core": {
+    "name": "Training Core",
+    "description": "Rest sites heal 6 extra HP.",
+    "effects": [
+      { "action": "rest_heal_bonus", "value": 6 }
+    ]
+  }
+}

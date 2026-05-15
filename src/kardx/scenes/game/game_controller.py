@@ -1,10 +1,8 @@
 # src/scenes/game/game_controller.py
 import time
-import os # <-- Import os to get terminal size here
 from ...game_state import Game
 from .game_view import GameView
-from ...keyboard import get_key, get_key_non_blocking, KEY_LEFT, KEY_RIGHT, KEY_ENTER, KEY_ESC, KEY_E
-from ...player import Player
+from ...keyboard import get_key, get_key_non_blocking, KEY_LEFT, KEY_RIGHT, KEY_ENTER, KEY_ESC, KEY_E, KEY_Q
 from ..pause_menu.pause_menu_controller import PauseMenuController
 
 class GameController:
@@ -13,6 +11,7 @@ class GameController:
         self.game = game
         self.view = view
         self.selected_card_index = 0
+        self.quit_to_menu_requested = False
 
     def run(self) -> str:
         self.game.start_battle()
@@ -29,7 +28,9 @@ class GameController:
             if not self.game.is_running:
                 break
             
-            self.execute_enemy_turn_step_by_step()
+            enemy_turn_result = self.execute_enemy_turn_step_by_step()
+            if enemy_turn_result == "quit_to_menu":
+                return "main_menu"
 
         # ... game over logic ...
         self.view.display_board(self.game.player, self.game.enemy, self.game.action_log)
@@ -39,6 +40,7 @@ class GameController:
 
     def handle_player_turn(self):
         self.game.start_player_turn()
+        self._normalize_selected_card_index()
         # Redraw once at the beginning of the turn
         self.view.display_board(
             self.game.player, self.game.enemy, self.game.action_log,
@@ -72,9 +74,18 @@ class GameController:
                             events,
                             selected_index=self.selected_card_index,
                             on_tick=self._handle_animation_input,
+                            should_stop=lambda: self.quit_to_menu_requested,
                         )
+                        if self.quit_to_menu_requested:
+                            return "quit_to_menu"
                         if not self.game.is_running: return "game_over"
                         # After animation, we need a final redraw of the stable state
+                        needs_redraw = True
+            elif key == KEY_Q:
+                if self.selected_card_index != -1:
+                    status = self.game.discard_player_card(self.selected_card_index)
+                    if status == "success":
+                        self._normalize_selected_card_index()
                         needs_redraw = True
             elif key == KEY_E:
                 self.game.end_player_turn()
@@ -82,14 +93,8 @@ class GameController:
             
             ### MODIFIED PAUSE LOGIC ###
             elif key == KEY_ESC:
-                pause_controller = PauseMenuController()
-                # The game screen is already drawn and visible here.
-                # We now call the pause controller, which will draw ON TOP.
-                pause_result = pause_controller.run()
-                
-                if pause_result == "main_menu":
-                    return "quit_to_menu" # New signal
-                # If "resume", we must redraw the screen to erase the pause menu.
+                if self._run_pause_menu() == "main_menu":
+                    return "quit_to_menu"
                 needs_redraw = True
 
             if needs_redraw:
@@ -100,8 +105,20 @@ class GameController:
                     selected_index=self.selected_card_index
                 )
 
+    def _normalize_selected_card_index(self):
+        if not self.game.player.hand:
+            self.selected_card_index = -1
+            return
+        if self.selected_card_index < 0:
+            self.selected_card_index = 0
+            return
+        self.selected_card_index = min(self.selected_card_index, len(self.game.player.hand) - 1)
+
     def _handle_animation_input(self, selected_index: int | None) -> int | None:
         key = get_key_non_blocking()
+        if key == KEY_ESC:
+            self._run_pause_menu()
+            return selected_index
         if key == KEY_LEFT and selected_index is not None and selected_index > 0:
             return selected_index - 1
         if (
@@ -112,17 +129,48 @@ class GameController:
         ):
             return selected_index + 1
         return selected_index
+
+    def _run_pause_menu(self) -> str:
+        pause_controller = PauseMenuController()
+        pause_result = pause_controller.run()
+        if pause_result == "main_menu":
+            self.quit_to_menu_requested = True
+            self.game.is_running = False
+            self.game.action_log.clear()
+            return "main_menu"
+        self.view.display_board(
+            self.game.player,
+            self.game.enemy,
+            self.game.action_log,
+            selected_index=self.selected_card_index if self.game.player.hand else None,
+        )
+        return "resume"
+
+    def _handle_enemy_turn_input(self, selected_index: int | None = None) -> int | None:
+        key = get_key_non_blocking()
+        if key == KEY_ESC:
+            self._run_pause_menu()
+        return selected_index
+
+    def _wait_with_pause(self, duration: float) -> str:
+        deadline = time.monotonic() + duration
+        while time.monotonic() < deadline and self.game.is_running:
+            self._handle_enemy_turn_input()
+            if self.quit_to_menu_requested:
+                return "quit_to_menu"
+            time.sleep(min(0.05, max(0, deadline - time.monotonic())))
+        return "continue"
     
-    def execute_enemy_turn_step_by_step(self):
-        # This method is fine, as its sleeps and redraws are self-contained.
-        # ... no changes needed here ...
-        if not self.game.is_running: return
+    def execute_enemy_turn_step_by_step(self) -> str:
+        if not self.game.is_running: return "continue"
         self.game.start_enemy_turn()
         self.view.display_board(self.game.player, self.game.enemy, self.game.action_log)
-        time.sleep(1.0)
+        if self._wait_with_pause(1.0) == "quit_to_menu":
+            return "quit_to_menu"
         while self.game.is_running:
             card_to_play = self.game.get_enemy_playable_card()
             if not card_to_play: break
+            played_card_index = None
             try:
                 played_card_index = self.game.enemy.hand.index(card_to_play)
                 self.view.display_board(
@@ -131,10 +179,22 @@ class GameController:
                 )
             except ValueError:
                 self.view.display_board(self.game.player, self.game.enemy, self.game.action_log)
-            time.sleep(1.5)
+            if self._wait_with_pause(1.5) == "quit_to_menu":
+                return "quit_to_menu"
             events = self.game.play_enemy_card(card_to_play)
-            self.view.play_animation(self.game.player, self.game.enemy, self.game.action_log, events)
+            self.view.play_animation(
+                self.game.player,
+                self.game.enemy,
+                self.game.action_log,
+                events,
+                on_tick=self._handle_enemy_turn_input,
+                should_stop=lambda: self.quit_to_menu_requested,
+            )
+            if self.quit_to_menu_requested:
+                return "quit_to_menu"
             self.view.display_board(self.game.player, self.game.enemy, self.game.action_log)
         self.game.end_enemy_turn()
         self.view.display_board(self.game.player, self.game.enemy, self.game.action_log)
-        time.sleep(1.0)
+        if self._wait_with_pause(1.0) == "quit_to_menu":
+            return "quit_to_menu"
+        return "continue"

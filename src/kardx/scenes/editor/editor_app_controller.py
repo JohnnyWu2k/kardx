@@ -39,6 +39,12 @@ class EditorAppController:
                 self.active_scene_controller = DataFileEditorController("events.jsonc", "event")
             elif next_signal == "relic_editor":
                 self.active_scene_controller = DataFileEditorController("relics.jsonc", "relic")
+            elif next_signal == "world_editor":
+                self.active_scene_controller = DataFileEditorController("world.jsonc", "sandbox world")
+            elif next_signal == "recipe_editor":
+                self.active_scene_controller = DataFileEditorController("recipes.jsonc", "sandbox recipe")
+            elif next_signal == "encounter_editor":
+                self.active_scene_controller = DataFileEditorController("encounters.jsonc", "sandbox encounter")
             elif next_signal == "editor_menu":
                 self.active_scene_controller = EditorMenuController()
             elif next_signal == "main_menu":

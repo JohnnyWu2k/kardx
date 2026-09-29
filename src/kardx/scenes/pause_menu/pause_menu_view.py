@@ -1,6 +1,5 @@
 # src/scenes/pause_menu/pause_menu_view.py
-import sys
-from ...view_utils import Colors, get_visible_len
+from ...view_utils import Colors, get_visible_len, render_overlay
 
 class PauseMenuView:
     """Displays a large, immersive pause menu panel."""
@@ -11,16 +10,16 @@ class PauseMenuView:
         """
         ### DESIGN TWEAKS for a larger panel ###
         # Let's make the box width a percentage of the terminal width
-        box_width = int(term_width * 0.6) # 60% of screen width
+        box_width = min(term_width, max(20, int(term_width * 0.6)))
         # Ensure it's an even number for cleaner centering
         if box_width % 2 != 0:
             box_width -= 1
             
         # Height is determined by content + padding
-        box_height = 4 + (len(options) * 2) # Title, separators, and spaced-out options
+        box_height = 5 + (len(options) * 2)
         
         start_col = (term_width - box_width) // 2
-        start_row = (term_height - box_height) // 2
+        start_row = max(0, (term_height - box_height) // 2)
             
         # --- Main Panel ---
         panel = []
@@ -54,14 +53,4 @@ class PauseMenuView:
         panel.append("│" + " " * (box_width - 2) + "│") # Spacer line
         panel.append("└" + "─" * (box_width - 2) + "┘")
         
-        # "Paste" the panel onto the screen
-        for i, line in enumerate(panel):
-            # Ensure we don't try to draw outside the screen boundaries
-            if start_row + i < term_height:
-                print(f"\033[{start_row + i};{start_col}H", end="")
-                print(line, end="")
-
-        # --- Final Touches ---
-        sys.stdout.flush()
-        print(f"\033[{term_height};0H", end="") # Hide cursor
-        sys.stdout.flush()
+        render_overlay(panel, start_col, start_row)

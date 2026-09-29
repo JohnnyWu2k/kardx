@@ -1,7 +1,7 @@
 # src/scenes/pause_menu/pause_menu_controller.py
-import os
 from .pause_menu_view import PauseMenuView
 from ...keyboard import get_key, KEY_UP, KEY_DOWN, KEY_ENTER, KEY_ESC
+from ...view_utils import terminal_size
 
 class PauseMenuController:
     """Handles the pause menu logic."""
@@ -12,14 +12,8 @@ class PauseMenuController:
 
     def run(self) -> str:
         """Returns 'resume' or 'main_menu'."""
-        try:
-            term_size = os.get_terminal_size()
-            ### CORRECTED ATTRIBUTE NAME: rows -> lines ###
-            term_width, term_height = term_size.columns, term_size.lines
-        except OSError:
-            term_width, term_height = 80, 18
-
         while True:
+            term_width, term_height = terminal_size()
             self.view.display(self.options, self.selected_index, term_width, term_height)
             key = get_key()
 

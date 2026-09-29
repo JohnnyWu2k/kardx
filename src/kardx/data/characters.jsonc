@@ -130,5 +130,38 @@
       "mana_gem": 2,
       "shield_strike": 2
     }
+  },
+  "enemy_giant_rat": {
+    "display_name": "Giant Rat",
+    "hp": 18,
+    "mana": 2,
+    "deck": {
+      "strike": 4,
+      "pierce": 1,
+      "defend": 2
+    }
+  },
+  "enemy_ancient_guardian": {
+    "display_name": "Ancient Guardian",
+    "hp": 52,
+    "mana": 4,
+    "deck": {
+      "strike": 4,
+      "defend": 4,
+      "full_defend": 2,
+      "shield_bash": 2,
+      "mana_gem": 2
+    }
+  },
+  "enemy_forest_wolf": {
+    "display_name": "Forest Wolf",
+    "hp": 30,
+    "mana": 3,
+    "deck": {
+      "strike": 5,
+      "pierce": 2,
+      "defend": 2,
+      "double_strike": 1
+    }
   }
 }

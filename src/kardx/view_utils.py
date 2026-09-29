@@ -3,10 +3,26 @@ import os
 import re
 import subprocess
 import sys
+from contextlib import contextmanager
+from contextvars import ContextVar
 from shutil import get_terminal_size
 from wcwidth import wcwidth, wcswidth
 from .settings import settings_manager
 from .loader import ensure_editable_data_file
+
+_terminal = ContextVar("kardx_terminal", default=None)
+_last_lines: list[str] = []
+_last_size = None
+_last_stream = None
+
+
+@contextmanager
+def use_terminal(terminal):
+    token = _terminal.set(terminal)
+    try:
+        yield
+    finally:
+        _terminal.reset(token)
 
 
 def open_file(filename: str):
@@ -32,25 +48,64 @@ def open_file(filename: str):
         print(f"Details: {e}")
 
 def terminal_size() -> tuple[int, int]:
+    terminal = _terminal.get()
+    if terminal is not None:
+        return terminal.size()
     size = get_terminal_size(fallback=(80, 24))
     return max(40, size.columns), max(16, size.lines)
 
 
 def clear_screen():
+    global _last_lines, _last_size
+    terminal = _terminal.get()
+    if terminal is not None:
+        terminal.render([])
+        return
+    _last_lines, _last_size = [], None
     sys.stdout.write("\033[?25l\033[H\033[J")
     sys.stdout.flush()
 
 
 def render_screen(lines: list[str]):
+    global _last_lines, _last_size, _last_stream
+    terminal = _terminal.get()
+    if terminal is not None:
+        terminal.render(lines)
+        return
     term_width, term_height = terminal_size()
-    visible_lines = []
-    for line in lines[:term_height]:
-        fitted = fit_to_width(line, term_width)
-        padding = " " * max(0, term_width - get_visible_len(fitted))
-        visible_lines.append(fitted + padding)
-    output = "\n".join(visible_lines)
-    sys.stdout.write("\033[?25l\033[H\033[J" + output)
-    sys.stdout.flush()
+    visible_lines = [fit_to_width(line, term_width) for line in lines[:term_height]]
+    visible_lines.extend([""] * (term_height - len(visible_lines)))
+    previous = _last_lines if _last_size == (term_width, term_height) and _last_stream is sys.stdout else []
+    output = []
+    for row, line in enumerate(visible_lines):
+        if row >= len(previous) or line != previous[row]:
+            output.append(f"\033[{row + 1};1H\033[0m{line}\033[0m\033[K")
+    if output:
+        # Position rows explicitly; disabling autowrap also protects the bottom
+        # row from scrolling when a card layout fills the terminal width.
+        sys.stdout.write("\033[?25l\033[?7l" + "".join(output) + "\033[?7h")
+        sys.stdout.flush()
+    _last_lines, _last_size, _last_stream = visible_lines, (term_width, term_height), sys.stdout
+
+
+def render_overlay(lines: list[str], x: int, y: int):
+    global _last_lines
+    terminal = _terminal.get()
+    if terminal is not None:
+        terminal.overlay(lines, x, y)
+        return
+    width, height = terminal_size()
+    output = []
+    for offset, line in enumerate(lines):
+        row = y + offset
+        if 0 <= row < height and 0 <= x < width:
+            output.append(f"\033[{row + 1};{x + 1}H\033[0m{fit_to_width(line, width - x)}\033[0m")
+            if row < len(_last_lines):
+                # Restore these rows on the next underlying scene render.
+                _last_lines[row] = "\0"
+    if output:
+        sys.stdout.write("\033[?25l\033[?7l" + "".join(output) + "\033[?7h")
+        sys.stdout.flush()
 
 
 def show_cursor():

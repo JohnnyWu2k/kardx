@@ -5,7 +5,7 @@ from ...keyboard import get_key, KEY_UP, KEY_DOWN, KEY_ENTER
 class MainMenuController:
     """Handles logic for the animated main menu."""
     def __init__(self):
-        self.options = ["Adventure Mode", "Quick Battle", "Settings", "Content Editor", "Quit"]
+        self.options = ["Sandbox Mode", "Adventure Mode", "Quick Battle", "Settings", "Content Editor", "Quit"]
         self.view = MenuView(self.options)
         self.selected_index = 0
 
@@ -24,6 +24,7 @@ class MainMenuController:
             elif key == KEY_ENTER:
                 chosen_option = self.options[self.selected_index]
                 # Return the signal for the AppController
+                if chosen_option == "Sandbox Mode": return "sandbox_mode"
                 if chosen_option == "Adventure Mode": return "adventure_mode"
                 if chosen_option == "Quick Battle": return "quick_battle"
                 if chosen_option == "Settings": return "settings"

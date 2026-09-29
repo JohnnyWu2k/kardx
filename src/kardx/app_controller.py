@@ -6,6 +6,7 @@ from .scenes.game.game_controller import GameController
 from .scenes.character_select.character_select_controller import CharacterSelectController
 from .scenes.settings.settings_controller import SettingsController
 from .scenes.adventure.adventure_controller import AdventureController
+from .scenes.sandbox.sandbox_controller import SandboxController
 # Import the actual models and views needed for creation
 from .game_state import Game
 from .scenes.game.game_view import GameView
@@ -20,6 +21,7 @@ class AppController:
             CharacterSelectController, 
             SettingsController,
             AdventureController,
+            SandboxController,
             EditorAppController # Now we only need to know about this one
         ]] = None
         self.pending_start_mode = "adventure"
@@ -33,8 +35,13 @@ class AppController:
             if isinstance(next_signal, str) and next_signal.startswith("player_"):
                 if self.pending_start_mode == "quick_battle":
                     self.active_scene_controller = self.start_game_session(next_signal)
+                elif self.pending_start_mode == "sandbox":
+                    self.active_scene_controller = self.start_sandbox_session(next_signal)
                 else:
                     self.active_scene_controller = self.start_adventure_session(next_signal)
+            elif next_signal == "sandbox_mode":
+                self.pending_start_mode = "sandbox"
+                self.active_scene_controller = CharacterSelectController()
             elif next_signal == "adventure_mode":
                 self.pending_start_mode = "adventure"
                 self.active_scene_controller = CharacterSelectController()
@@ -68,6 +75,18 @@ class AppController:
             print("FATAL ERROR: Failed to initialize adventure mode.")
             print(f"  - {exc}")
             print("Please check adventures.jsonc, events.jsonc, relics.jsonc, and characters.jsonc.")
+            print("="*50)
+            input("Press Enter to return to the main menu...")
+            return MainMenuController()
+
+    def start_sandbox_session(self, player_id: str) -> Union[SandboxController, MainMenuController]:
+        try:
+            return SandboxController(player_id=player_id)
+        except Exception as exc:
+            print("\n" + "="*50)
+            print("FATAL ERROR: Failed to initialize sandbox mode.")
+            print(f"  - {exc}")
+            print("Please check world.jsonc, recipes.jsonc, encounters.jsonc, cards.jsonc, and characters.jsonc.")
             print("="*50)
             input("Press Enter to return to the main menu...")
             return MainMenuController()

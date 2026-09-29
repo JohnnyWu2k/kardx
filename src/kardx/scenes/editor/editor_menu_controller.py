@@ -11,6 +11,9 @@ class EditorMenuController:
             "Edit Adventures",
             "Edit Events",
             "Edit Relics",
+            "Edit Sandbox World",
+            "Edit Sandbox Recipes",
+            "Edit Sandbox Encounters",
             "Back to Main Menu",
         ]
         self.view = EditorMenuView(self.options)
@@ -40,5 +43,11 @@ class EditorMenuController:
                     return "event_editor"
                 elif chosen_option == "Edit Relics":
                     return "relic_editor"
+                elif chosen_option == "Edit Sandbox World":
+                    return "world_editor"
+                elif chosen_option == "Edit Sandbox Recipes":
+                    return "recipe_editor"
+                elif chosen_option == "Edit Sandbox Encounters":
+                    return "encounter_editor"
                 elif chosen_option == "Back to Main Menu":
                     return "main_menu"

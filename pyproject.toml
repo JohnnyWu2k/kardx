@@ -1,28 +1,44 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["uv_build>=0.12.7,<0.13"]
+build-backend = "uv_build"
 
 [project]
-name = "kard-x"
+name = "ttx"
 version = "0.1.0"
-description = "A minimalist, data-driven, text-based card battler for your terminal."
+description = "A multiplayer sandbox RPG with Kardx card battles."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
   { name = "Kard-X contributors" }
 ]
 dependencies = [
   "json5>=0.9",
-  "wcwidth>=0.2"
+  "wcwidth>=0.2",
+  "windows-curses>=2.4; platform_system == 'Windows'"
 ]
 
 [project.scripts]
+ttx = "ttx.cli:main"
 kardx = "kardx.main:main"
+sandkard = "kardx.sandbox_main:main"
 
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["kardx*", "src*"]
+[dependency-groups]
+dev = ["pytest>=8,<10"]
 
-[tool.setuptools.package-data]
-"kardx.data" = ["*.jsonc"]
+[tool.uv]
+required-version = ">=0.12.7"
+
+[tool.uv.build-backend]
+module-name = ["ttx", "kardx"]
+source-include = ["tests/**", "uv.lock", ".python-version", "src/main.py"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true

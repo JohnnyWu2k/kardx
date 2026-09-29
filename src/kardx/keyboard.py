@@ -1,6 +1,19 @@
 # src/keyboard.py
 # A simple, cross-platform module for single-key presses.
 import sys
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+_key_readers = ContextVar("kardx_key_readers", default=None)
+
+
+@contextmanager
+def use_key_reader(blocking, non_blocking):
+    token = _key_readers.set((blocking, non_blocking))
+    try:
+        yield
+    finally:
+        _key_readers.reset(token)
 
 KEY_UP = b'<UP>'
 KEY_DOWN = b'<DOWN>'
@@ -35,17 +48,17 @@ def _special_key_from_scan_code(key: bytes) -> bytes:
 try:
     # --- Windows Implementation ---
     import msvcrt
-    def get_key():
+    def _get_key():
         """Gets a single key press (blocking)."""
         key = msvcrt.getch()
         if key in b'\x00\xe0': # Special key prefix
             return _special_key_from_scan_code(msvcrt.getch())
         return _normalize_key(key)
 
-    def get_key_non_blocking():
+    def _get_key_non_blocking():
         """Gets a single key press if one is available (non-blocking)."""
         if msvcrt.kbhit():
-            return get_key() # Reuse the blocking logic to handle special keys
+            return _get_key() # Reuse the blocking logic to handle special keys
         return None
 
 except ImportError:
@@ -73,7 +86,7 @@ except ImportError:
             return KEY_LEFT
         return KEY_ESC
     
-    def get_key():
+    def _get_key():
         """Gets a single key press (blocking)."""
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
@@ -86,7 +99,7 @@ except ImportError:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
         return _normalize_key(key.encode('utf-8'))
 
-    def get_key_non_blocking():
+    def _get_key_non_blocking():
         """Gets a single key press if one is available (non-blocking)."""
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
@@ -102,3 +115,13 @@ except ImportError:
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
         return None
+
+
+def get_key():
+    readers = _key_readers.get()
+    return readers[0]() if readers else _get_key()
+
+
+def get_key_non_blocking():
+    readers = _key_readers.get()
+    return readers[1]() if readers else _get_key_non_blocking()

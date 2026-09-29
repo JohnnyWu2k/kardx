@@ -140,10 +140,15 @@ class TerminalRenderer:
 class CardTerminal:
     """Adapt Kardx's existing view and key interface to the same curses screen."""
 
-    def __init__(self, renderer: TerminalRenderer):
+    def __init__(self, renderer: TerminalRenderer, on_pause=None):
         self.renderer = renderer
         self.first_frame = True
         self.lines: list[str] = []
+        self.on_pause = on_pause
+
+    def pause(self, paused: bool):
+        if self.on_pause:
+            self.on_pause(paused)
 
     def size(self) -> tuple[int, int]:
         rows, columns = self.renderer.screen.getmaxyx()

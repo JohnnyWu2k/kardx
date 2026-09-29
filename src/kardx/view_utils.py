@@ -25,6 +25,18 @@ def use_terminal(terminal):
         _terminal.reset(token)
 
 
+@contextmanager
+def paused_terminal():
+    terminal = _terminal.get()
+    if terminal is not None and hasattr(terminal, "pause"):
+        terminal.pause(True)
+    try:
+        yield
+    finally:
+        if terminal is not None and hasattr(terminal, "pause"):
+            terminal.pause(False)
+
+
 def open_file(filename: str):
     """
     Opens a file in the data directory with the default system application.

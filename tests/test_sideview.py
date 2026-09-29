@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from ttx.net import client, server
 from ttx.world.map import InfiniteGameMap
-from ttx.world.physics import grounded, jump, request_jump, step_actor, step_vertical, WALK_SPEED
+from ttx.world.physics import INPUT_STEP, grounded, jump, request_jump, step_actor, step_vertical, WALK_SPEED
 from ttx.world.spawn import spawn_enemies, spawn_objects
 
 
@@ -82,7 +82,7 @@ class PhysicsTests(unittest.TestCase):
         blocked = lambda x, y: y >= 20 or y < 0
         speeds = []
         for _ in range(8):
-            step_actor(actor, blocked, 1)
+            step_actor(actor, blocked, 1, dt=INPUT_STEP)
             speeds.append(actor["vx"])
         self.assertLess(speeds[0], speeds[-1])
         self.assertLessEqual(max(speeds), WALK_SPEED)
@@ -392,6 +392,7 @@ class ClientTests(unittest.TestCase):
         self.game.stdscr = FakeScreen()
         self.game.game_map = InfiniteGameMap(512, seed=42)
         self.game.scale = 1
+        self.game.smooth_graphics = False
         self.game.card_hp = None
         self.game.card_player_id = "player_balanced"
         self.game.card_deck_ids = self.game.card_max_hp = self.game.card_base_mana = None
@@ -423,12 +424,12 @@ class ClientTests(unittest.TestCase):
             self.game.process_key(ord("d"))
             self.game.process_key(ord("w"))
             self.game._update_controls(10.0)
-            self.game._update_controls(10.01)
+            self.game._update_controls(10.02)
             self.game.process_key(ord("s"))
-        self.assertEqual(self.messages, [{"move": 1, "jump": True},
+        self.assertEqual(self.messages, [{"input_seq": 1, "move": 1, "jump": True},
                                         {"gather": True, "dx": 0, "dy": 1}])
         self.game._update_controls(10.3)
-        self.assertEqual(self.messages[-1], {"move": 0})
+        self.assertEqual(self.messages[-1]["move"], 0)
 
     def test_world_dimensions_come_from_server_instead_of_terminal(self):
         client.game_state.update(map_seed=42, world_width=512, world_height=192)
@@ -446,7 +447,7 @@ class ClientTests(unittest.TestCase):
         self.game.process_key(ord("s"))
         self.game.process_key(ord("2"))
         self.game.process_key(10)
-        self.assertEqual(self.messages, [{"move": 0}, {"build": True, "x": 200, "y": 22, "material": "stone"}])
+        self.assertEqual(self.messages, [{"stop": True}, {"build": True, "x": 200, "y": 22, "material": "stone"}])
 
     def test_mined_tiles_are_rendered_as_air_and_do_not_cover_player(self):
         player = client.game_state["players"]["p"]
@@ -482,12 +483,21 @@ class ClientTests(unittest.TestCase):
             self.assertEqual(draw.call_count, 2)
 
     def test_escape_pause_overlays_world_and_resume_restores_it(self):
+        def send(message):
+            self.messages.append(message)
+            if "pause" in message:
+                client.game_state["players"]["p"]["paused"] = message["pause"]
+            if "input_seq" in message:
+                client.game_state["players"]["p"]["input_seq"] = message["input_seq"]
+
+        self.game._send = send
         with patch.object(client.curses, "color_pair", return_value=0), patch.object(client.curses, "flushinp"):
             self.game.render()
             before = self.game.stdscr.cells.copy()
             self.game.stdscr.keys = [27]
             self.assertTrue(self.game._pause())
-            self.assertEqual(self.messages[-1], {"move": 0})
+            self.assertEqual(self.messages, [{"input_seq": 1, "move": 0, "stop": True},
+                                            {"pause": True}, {"pause": False}])
             self.assertIn("Paused", "".join(self.game.stdscr.cells.values()))
             self.game.render()
             self.assertEqual(self.game.stdscr.cells, before)
@@ -503,6 +513,8 @@ class ClientTests(unittest.TestCase):
                 player["battle_enemy"] = "e"
             elif message.get("battle") == "end":
                 player.pop("battle_enemy", None)
+            elif "pause" in message:
+                player["paused"] = message["pause"]
 
         self.game._send = send
         self.game.stdscr.keys = [27, client.curses.KEY_DOWN, 10]
@@ -510,7 +522,8 @@ class ClientTests(unittest.TestCase):
             "ttx.terminal.time.sleep"
         ), patch.object(client.curses, "endwin", side_effect=AssertionError("terminal mode switch")):
             self.game._fight_adjacent_enemy()
-        self.assertEqual(self.messages, [{"move": 0}, {"battle": "start", "enemy_id": "e"}, {"battle": "end"}])
+        self.assertEqual(self.messages, [{"stop": True}, {"battle": "start", "enemy_id": "e"},
+                                         {"pause": True}, {"pause": False}, {"battle": "end"}])
         self.assertNotIn("battle_enemy", player)
         self.assertIsNotNone(self.game.card_hp)
         self.assertEqual(self.game.stdscr.timeouts[-1], 0)

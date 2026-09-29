@@ -5,9 +5,11 @@ import random
 import socket
 import threading
 import time
+from collections import deque
 
 from ttx.world.map import InfiniteGameMap
-from ttx.world.physics import grounded, jump, request_jump, step_actor, stop_motion
+from ttx.world.physics import INPUT_STEP, grounded, jump, release_motion, request_jump, step_actor, stop_motion
+from ttx.net.prediction import apply_input
 from ttx.world.spawn import object_at, spawn_enemies, spawn_objects
 
 HOST = "0.0.0.0"
@@ -24,6 +26,7 @@ enemies: dict[str, dict] = {}
 objects: dict[str, dict] = {}
 custom_tiles: dict[str, dict] = {}
 connections: dict[socket.socket, str] = {}
+input_queues: dict[str, deque] = {}
 state_lock = threading.Lock()
 broadcast_lock = threading.Lock()
 server_stop_event = threading.Event()
@@ -59,6 +62,7 @@ def build_state(client_id: str | None = None) -> dict:
         "world_height": world_map.height if world_map else WORLD_HEIGHT,
         "tick": simulation_tick,
         "terrain_revision": terrain_revision,
+        "world_paused": _world_paused(),
     }
 
 
@@ -79,6 +83,7 @@ def reset_game_state(world_width: int, world_height: int, seed: int | None = Non
         objects.update(next_objects)
         custom_tiles.clear()
         connections.clear()
+        input_queues.clear()
         world_map = next_world_map
         enemy_rng = random.Random(map_seed)
         enemy_move_elapsed = 0.0
@@ -107,15 +112,32 @@ def tick_world():
     """Advance physics independently of player input; called at 20 Hz."""
     global enemy_move_elapsed, simulation_tick
     with state_lock:
-        if world_map is None:
+        if world_map is None or _world_paused():
             return
         simulation_tick += 1
-        for player in players.values():
-            if not player.get("battle_enemy"):
-                if simulation_tick > player.get("move_expires_tick", -1):
-                    player["move"] = 0
-                step_actor(player, lambda x, y, actor=player: _actor_blocked(x, y, actor),
-                           int(player.get("move", 0)))
+        for client_id, player in players.items():
+            if player.get("battle_enemy") or player.get("paused"):
+                continue
+            blocked = lambda x, y, actor=player: _actor_blocked(x, y, actor)
+            queue = input_queues.get(client_id)
+            if simulation_tick > player.get("move_expires_tick", -1):
+                player["move"] = 0
+                player["input_mode"] = False
+            if queue or player.get("input_mode"):
+                # The client and server run the same 60 Hz input frames. Do not
+                # add unacknowledged physics between frames: replay must match.
+                for _ in range(3):
+                    if not queue:
+                        break
+                    command = queue.popleft()
+                    apply_input(player, command, blocked)
+                    player["input_seq"] = command["input_seq"]
+            else:
+                for _ in range(3):
+                    step_actor(player, blocked, int(player.get("move", 0)), dt=INPUT_STEP)
+            _finish_release(client_id)
+        if _world_paused():
+            return
         enemy_move_elapsed += TICK_INTERVAL
         if enemy_move_elapsed >= ENEMY_MOVE_INTERVAL:
             enemy_move_elapsed -= ENEMY_MOVE_INTERVAL
@@ -124,8 +146,53 @@ def tick_world():
             if not enemy.get("engaged_by"):
                 enemy["jump_cooldown"] = max(0, enemy.get("jump_cooldown", 0) - 1)
                 speed = 0.30 if enemy.get("mode") == "chase" else 0.22
-                step_actor(enemy, lambda x, y, actor=enemy: _actor_blocked(x, y, actor),
-                           int(enemy.get("move", 0)), speed)
+                for _ in range(3):
+                    step_actor(enemy, lambda x, y, actor=enemy: _actor_blocked(x, y, actor),
+                               int(enemy.get("move", 0)), speed, dt=INPUT_STEP)
+
+
+def _world_paused() -> bool:
+    return bool(players) and all(player.get("paused") for player in players.values())
+
+
+def _finish_release(client_id: str):
+    player = players[client_id]
+    if input_queues.get(client_id):
+        return
+    if player.pop("release_requested", False):
+        release_motion(player)
+    if player.pop("pause_requested", False):
+        release_motion(player)
+        player["paused"] = True
+
+
+def _handle_pause(client_id: str, paused: bool):
+    player = players[client_id]
+    if paused:
+        player["pause_requested"] = True
+        _finish_release(client_id)
+    else:
+        player.pop("pause_requested", None)
+        player.pop("paused", None)
+        player["move_expires_tick"] = simulation_tick + CONTROL_TIMEOUT_TICKS
+
+
+def _queue_input(client_id: str, message: dict):
+    player = players[client_id]
+    sequence, direction = message.get("input_seq"), message.get("move", 0)
+    if type(sequence) is not int or sequence <= player.get("input_received_seq", 0) or direction not in (-1, 0, 1):
+        return
+    queue = input_queues.setdefault(client_id, deque())
+    if len(queue) >= 60:
+        return
+    command = {"input_seq": sequence, "move": int(direction)}
+    if message.get("stop"):
+        command["stop"] = True
+    if message.get("jump"):
+        command["jump"] = True
+    queue.append(command)
+    player.update(input_received_seq=sequence, input_mode=True,
+                  move_expires_tick=simulation_tick + CONTROL_TIMEOUT_TICKS)
 
 
 def _simulation_loop():
@@ -176,7 +243,7 @@ def _update_enemies():
         for player_id, player in players.items():
             distance = abs(int(player["x"]) - int(enemy["x"])) + abs(int(player["y"]) - int(enemy["y"]))
             sight_radius = radius + (4 if enemy.get("target_id") == player_id else 0)
-            if not player.get("battle_enemy") and distance <= sight_radius and _has_line_of_sight(enemy, player):
+            if not player.get("battle_enemy") and not player.get("paused") and not player.get("pause_requested") and distance <= sight_radius and _has_line_of_sight(enemy, player):
                 candidates.append((distance, player_id, player))
         if candidates:
             # Keep a visible target rather than twitch between two nearby players.
@@ -189,6 +256,7 @@ def _update_enemies():
         elif (enemy.get("memory_ticks", 0) > 0 and
               enemy.get("target_id") in players and
               not players[enemy["target_id"]].get("battle_enemy") and
+              not players[enemy["target_id"]].get("paused") and
               abs(int(players[enemy["target_id"]]["x"]) - int(enemy["x"])) +
               abs(int(players[enemy["target_id"]]["y"]) - int(enemy["y"])) <= radius + 4):
             enemy["memory_ticks"] -= decision_ticks
@@ -274,6 +342,7 @@ def handle_client(conn: socket.socket, addr):
             "vx": 0.0,
             "horizontal_progress": 0.0,
             "move": 0,
+            "input_seq": 0,
         }
         connections[conn] = client_id
     broadcast_state()
@@ -305,6 +374,7 @@ def handle_client(conn: socket.socket, addr):
             connections.pop(conn, None)
             _end_battle(client_id)
             players.pop(client_id, None)
+            input_queues.pop(client_id, None)
         broadcast_state()
         conn.close()
 
@@ -313,7 +383,13 @@ def process_message(client_id: str, message: dict):
     with state_lock:
         if client_id not in players or world_map is None:
             return
-        if message.get("battle"):
+        if "pause" in message and type(message["pause"]) is bool:
+            _handle_pause(client_id, message["pause"])
+        elif message.get("battle") == "end":
+            _end_battle(client_id)
+        elif players[client_id].get("paused") or players[client_id].get("pause_requested"):
+            return
+        elif message.get("battle"):
             _handle_battle(client_id, message)
         elif players[client_id].get("battle_enemy") and not message.get("attack"):
             return
@@ -323,7 +399,13 @@ def process_message(client_id: str, message: dict):
             _handle_attack(client_id, message)
         elif message.get("gather"):
             _handle_gather(client_id, message)
+        elif "input_seq" in message:
+            _queue_input(client_id, message)
         else:
+            if message.get("stop"):
+                players[client_id]["release_requested"] = True
+                _finish_release(client_id)
+                return
             if "move" in message or "dx" in message:
                 _handle_move(client_id, message.get("move", message.get("dx", 0)))
             if message.get("jump"):
@@ -462,6 +544,8 @@ def _handle_battle(client_id: str, message: dict):
     enemy["mode"] = "battle"
     stop_motion(player)
     stop_motion(enemy)
+    input_queues.pop(client_id, None)
+    player["input_seq"] = player.get("input_received_seq", player.get("input_seq", 0))
 
 
 def _end_battle(client_id: str):

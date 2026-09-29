@@ -66,6 +66,20 @@ class MotionInputTests(unittest.TestCase):
         state[:] = [0, True]
         self.assertEqual(controls.sample(1.4), (0, True))
 
+    def test_native_short_walk_tap_is_visible_but_release_overrides_repeat(self):
+        state = [0, False]
+        controls = MotionInput(lambda: tuple(state))
+        controls.feed("d", 1.0)
+        self.assertEqual(controls.sample(1.01), (1, False))
+        self.assertEqual(controls.sample(1.04), (1, False))
+        self.assertEqual(controls.sample(1.09), (0, False))
+        state[:] = [-1, False]
+        controls.sample(1.1)
+        controls.feed("a", 1.11)
+        state[:] = [0, False]
+        self.assertEqual(controls.sample(1.12), (0, False))
+        self.assertEqual(controls.sample(1.14), (0, False))
+
     def test_repeat_fallback_combines_walking_and_jumping_then_releases(self):
         controls = MotionInput()
         controls.feed("a", 1.0)
@@ -89,8 +103,19 @@ class MotionInputTests(unittest.TestCase):
             stdin.isatty.return_value = True
             sample = windows_key_state()
             self.assertEqual(sample(), (1, True))
+            api.GetAsyncKeyState.side_effect = lambda key: 0x8000 if key in (0x41, 0x44) else 0
+            controls = MotionInput(sample)
+            controls.feed("d", 1.0)
+            self.assertEqual(controls.sample(1.01), (0, False))
             api.GetForegroundWindow.return_value = 100
             self.assertEqual(sample(), (0, False))
+            controls = MotionInput(sample)
+            controls.feed("d", 1.0)
+            controls.feed("w", 1.0)
+            self.assertEqual(controls.sample(1.01), (0, False))
+            api.GetForegroundWindow.return_value = 42
+            api.GetAsyncKeyState.side_effect = lambda key: 0
+            self.assertEqual(controls.sample(1.02), (0, False))
 
 
 class TerminalTests(unittest.TestCase):

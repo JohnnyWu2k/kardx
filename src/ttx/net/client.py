@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import curses
 import json
-import math
 import socket
 import threading
 import time
@@ -10,14 +9,17 @@ import time
 from ttx.combat.card_battle import run_card_battle
 from ttx.input import MotionInput, windows_key_state
 from ttx.terminal import CardTerminal, Frame, TerminalRenderer
+from ttx.net.prediction import LocalPrediction, RemoteInterpolation
+from ttx.world.camera import Camera
 from ttx.world.map import InfiniteGameMap
+from ttx.world.physics import position
+from ttx.world.render import DotCanvas, actor_sprite, marker, origin, terrain, tree_sprite
 
 PORT = 12345
 game_state: dict = {}
 UI_WIDTH_RATIO = 0.25
 MIN_PANEL_WIDTH = 18
-FRAME_INTERVAL = 1 / 30
-CONTROL_HEARTBEAT = 0.10
+FRAME_INTERVAL = 1 / 60
 
 
 def layout_columns(max_x: int) -> tuple[int, int, int]:
@@ -51,7 +53,9 @@ def network_listener(sock: socket.socket, stop_event: threading.Event):
             while b"\n" in buffer:
                 line, buffer = buffer.split(b"\n", 1)
                 if line.strip():
-                    game_state = json.loads(line)
+                    state = json.loads(line)
+                    state["received_at"] = time.monotonic()
+                    game_state = state
     except (OSError, ValueError):
         pass
     finally:
@@ -65,6 +69,7 @@ class Game:
         self.game_map: InfiniteGameMap | None = None
         self.quit_to_menu = False
         self.scale = 1
+        self.smooth_graphics = True
         self.active_inventory_slot = 0
         self.inventory = ["wood", "stone", "dirt", "sand", None]
         self.building_mode_active = False
@@ -81,11 +86,13 @@ class Game:
         self._renderer = renderer or TerminalRenderer(stdscr)
         self._controls = MotionInput(windows_key_state())
         self._last_direction = 0
-        self._last_control_send = 0.0
         self._render_state = None
         self._canvas = None
-        self._camera = None
-        self._camera_time = 0.0
+        self._camera = Camera()
+        self._prediction = None
+        self._remote_interpolation = RemoteInterpolation()
+        self._paused = False
+        self._dot_canvas = None
         self._stop_event = stop_event
         self._notice = ""
         self._notice_until = 0.0
@@ -155,8 +162,13 @@ class Game:
             self.building_mode_active = not self.building_mode_active
             self._dirty = True
             return True
+        if ch == "v":
+            self.smooth_graphics = not self.smooth_graphics
+            self._camera = Camera()
+            self._dirty = True
+            return True
         if ch == "g":
-            dx, dy = self.build_direction if self.building_mode_active else (int((self._my_player() or {}).get("facing", 1)), 0)
+            dx, dy = self.build_direction if self.building_mode_active else (int((self._controlled_player() or {}).get("facing", 1)), 0)
             self._send({"gather": True, "dx": dx, "dy": dy})
             return True
         if ch == "x":
@@ -182,32 +194,98 @@ class Game:
         return True
 
     def _update_controls(self, now: float):
-        if self.building_mode_active:
+        if getattr(self, "_paused", False):
             return
-        direction, jumped = self._motion_input().sample(now)
-        if (jumped or direction != getattr(self, "_last_direction", 0) or
-                direction and now - getattr(self, "_last_control_send", 0) >= CONTROL_HEARTBEAT):
-            message = {"move": direction}
-            if jumped:
-                message["jump"] = True
-            self._send(message)
-            self._last_direction, self._last_control_send = direction, now
+        direction, jumped = (0, False) if self.building_mode_active else self._motion_input().sample(now)
+        packet = game_state
+        prediction = self._local_prediction(now, packet)
+        if prediction:
+            prediction.advance(now, direction, jumped, lambda x, y: self._prediction_blocked(x, y, packet), self._send)
+        if direction != getattr(self, "_last_direction", 0) or jumped:
+            self._dirty = True
+        self._last_direction = direction
+
+    def _server_player(self, state=None) -> dict | None:
+        state = game_state if state is None else state
+        players = state.get("players", {})
+        client_id = state.get("client_id")
+        return players.get(client_id) if client_id else next(iter(players.values()), None)
+
+    def _controlled_player(self) -> dict | None:
+        prediction = getattr(self, "_prediction", None)
+        return prediction.actor if prediction else self._my_player()
+
+    def _prediction_blocked(self, x: int, y: int, state=None) -> bool:
+        if self.game_map is None:
+            return True
+        state = game_state if state is None else state
+        override = state.get("custom_tiles", {}).get(f"{x},{y}")
+        tile = override["char"] if override else self.game_map.get_tile(x, y)
+        if tile != self.game_map.AIR:
+            return True
+        client_id = state.get("client_id")
+        for group in ("players", "enemies"):
+            for actor_id, actor in state.get(group, {}).items():
+                if group == "players" and (actor_id == client_id or actor is self._server_player(state)):
+                    continue
+                if int(actor["x"]) == x and int(actor["y"]) == y:
+                    return True
+        return False
+
+    def _local_prediction(self, now: float, packet=None):
+        packet = game_state if packet is None else packet
+        authoritative = self._server_player(packet)
+        if not authoritative:
+            return None
+        if getattr(self, "_prediction", None) is None:
+            self._prediction = LocalPrediction(authoritative, now)
+        self._prediction.reconcile(authoritative, packet, lambda x, y: self._prediction_blocked(x, y, packet))
+        return self._prediction
+
+    def _view_state(self, now: float) -> dict:
+        packet = game_state
+        state = dict(packet)
+        interpolation = getattr(self, "_remote_interpolation", None)
+        if interpolation is None:
+            interpolation = self._remote_interpolation = RemoteInterpolation()
+        interpolation.update(packet, now)
+        positions = interpolation.positions(now)
+        for group in ("players", "enemies"):
+            state[group] = {}
+            for actor_id, actor in packet.get(group, {}).items():
+                display = dict(actor)
+                if (not packet.get("world_paused") and not actor.get("paused")
+                        and not actor.get("engaged_by") and not actor.get("battle_enemy")):
+                    display["display_position"] = positions.get((group, actor_id), position(actor))
+                state[group][actor_id] = display
+        prediction = self._local_prediction(now, packet)
+        if prediction:
+            client_id = packet.get("client_id") or next(iter(state["players"]), None)
+            state["players"][client_id] = dict(prediction.actor)
+        return state
 
     def _stop_controls(self):
         self._motion_input().reset()
-        self._send({"move": 0})
+        prediction = getattr(self, "_prediction", None)
+        if prediction:
+            command = prediction.release(time.monotonic())
+            if command:
+                self._send(command)
+        else:
+            self._send({"stop": True})
         self._last_direction = 0
-        self._last_control_send = time.monotonic()
 
     def _compose_frame(self) -> Frame:
         frame = self._terminal_renderer().frame()
         self._canvas = frame
-        self._render_state = game_state
+        self._dot_canvas = None
+        self._render_state = self._view_state(time.monotonic())
         try:
             self._draw_world()
         finally:
             self._canvas = None
             self._render_state = None
+            self._dot_canvas = None
         return frame
 
     def render(self, transition: bool = False):
@@ -222,27 +300,45 @@ class Game:
         max_y, max_x = self.stdscr.getmaxyx()
         game_width, panel_x, panel_width = layout_columns(max_x)
         camera_x, camera_y = self._camera_offset()
+        smooth = getattr(self, "smooth_graphics", True)
         if self.game_map:
             tiles = self.state.get("custom_tiles", {})
             revision = self.state.get("terrain_revision")
             if revision is None:
                 revision = tuple(sorted((key, tile["char"]) for key, tile in tiles.items()))
-            key = (id(self.game_map), camera_x, camera_y, max_y, max_x, self.scale, revision)
+            camera_key = origin((camera_x, camera_y)) if smooth else (camera_x, camera_y)
+            key = (id(self.game_map), camera_key, max_y, max_x, self.scale, revision, smooth)
             if getattr(self, "_terrain_key", None) == key:
-                self.canvas.cells = [row.copy() for row in self._terrain_frame.cells]
+                if smooth:
+                    self._dot_canvas = self._terrain_frame.copy()
+                else:
+                    self.canvas.cells = [row.copy() for row in self._terrain_frame.cells]
             else:
-                self.game_map.draw_scaled(
-                    self.canvas, scale=self.scale, camera_x=camera_x, camera_y=camera_y,
-                    width_limit=game_width, custom_tiles=tiles,
-                )
-                self._terrain_key, self._terrain_frame = key, self.canvas.copy()
+                if smooth:
+                    self._dot_canvas = DotCanvas(max_y, game_width)
+                    attributes = {tile: self.game_map._tile_attr(tile) for tile in self.game_map.SOLID_TILES}
+                    attributes["#"] |= curses.A_DIM
+                    terrain(self._dot_canvas, self.game_map, (camera_x, camera_y), tiles, attributes)
+                    self._terrain_frame = self._dot_canvas.copy()
+                else:
+                    self.game_map.draw_scaled(
+                        self.canvas, scale=self.scale, camera_x=camera_x, camera_y=camera_y,
+                        width_limit=game_width, custom_tiles=tiles,
+                    )
+                    self._terrain_frame = self.canvas.copy()
+                self._terrain_key = key
         self._draw_entities(camera_x, camera_y, game_width, max_y)
         if self.building_mode_active:
             player = self._my_player()
             if player:
                 dx, dy = self.build_direction
-                self._draw_at({"x": int(player["x"]) + dx, "y": int(player["y"]) + dy, "char": "+"},
-                              camera_x, camera_y, game_width, max_y, curses.A_REVERSE)
+                aim = {"x": int(player["x"]) + dx, "y": int(player["y"]) + dy, "char": "+"}
+                if smooth and self._dot_canvas:
+                    marker(self._dot_canvas, aim, (camera_x, camera_y), curses.color_pair(4) | curses.A_BOLD)
+                else:
+                    self._draw_at(aim, camera_x, camera_y, game_width, max_y, curses.A_REVERSE)
+        if self._dot_canvas:
+            self._dot_canvas.paint(self.canvas)
         self._draw_divider(game_width, max_y)
         self._draw_ui_panel(panel_x, panel_width, max_y)
 
@@ -250,6 +346,7 @@ class Game:
         if not self.wait_for_map_seed():
             return "quit_to_menu"
         self.render(transition=True)
+        next_frame = time.monotonic()
         running = True
         while running:
             # Bound the drain so a key-repeat flood cannot starve rendering.
@@ -264,11 +361,15 @@ class Game:
             if not running or self.quit_to_menu or (self._stop_event and self._stop_event.is_set()):
                 break
             self._update_controls(now)
-            if self._dirty or now - self._last_render >= FRAME_INTERVAL:
+            if self._dirty or now >= next_frame:
                 self.render()
                 self._dirty = False
                 self._last_render = now
-            time.sleep(0.005)
+                if now >= next_frame:
+                    next_frame += FRAME_INTERVAL
+                    if next_frame < now:
+                        next_frame = now + FRAME_INTERVAL
+            time.sleep(max(0.0005, min(0.002, next_frame - time.monotonic())))
         self._stop_controls()
         return "quit_to_menu" if self.quit_to_menu else "exit"
 
@@ -282,13 +383,18 @@ class Game:
 
     def _pause(self) -> bool:
         self._stop_controls()
+        self._paused = True
+        self._request_pause(True)
         options = ["Resume", "Quit"]
         selected = 0
         renderer = self._terminal_renderer()
+        background = self._compose_frame()
         self.stdscr.timeout(50)
         try:
             while True:
-                frame = self._compose_frame()
+                if background.getmaxyx() != self.stdscr.getmaxyx():
+                    background = self._compose_frame()
+                frame = background.copy()
                 width = min(28, frame.columns)
                 left, top = max(0, (frame.columns - width) // 2), max(0, (frame.rows - 7) // 2)
                 panel = ["+" + "-" * max(0, width - 2) + "+",
@@ -316,16 +422,36 @@ class Game:
                     self.quit_to_menu = True
                     return False
         finally:
+            self._request_pause(False)
             self.stdscr.timeout(0)
             self._motion_input().reset()
+            prediction = getattr(self, "_prediction", None)
+            if prediction and self._server_player():
+                prediction.resume(self._server_player(), time.monotonic())
+            self._paused = False
             curses.flushinp()
             self._dirty = True
+
+    def _request_pause(self, paused: bool):
+        self._send({"pause": paused})
+        deadline = time.monotonic() + 0.5
+        while bool((self._server_player() or {}).get("paused")) != paused:
+            if time.monotonic() >= deadline or self.quit_to_menu or (self._stop_event and self._stop_event.is_set()):
+                break
+            time.sleep(0.005)
 
     def _fight_adjacent_enemy(self):
         target_enemy_id, enemy = self._adjacent_enemy()
         if not target_enemy_id or not enemy:
             return
         self._stop_controls()
+        prediction = getattr(self, "_prediction", None)
+        if prediction:
+            deadline = time.monotonic() + 0.5
+            while int((self._server_player() or {}).get("input_seq", 0)) < prediction.sequence:
+                if time.monotonic() >= deadline:
+                    return
+                time.sleep(0.005)
         self._send({"battle": "start", "enemy_id": target_enemy_id})
         deadline = time.monotonic() + 1.0
         while time.monotonic() < deadline:
@@ -345,7 +471,7 @@ class Game:
                 hp=self.card_hp,
                 max_hp=self.card_max_hp,
                 base_mana=self.card_base_mana,
-                terminal=CardTerminal(self._terminal_renderer()),
+                terminal=CardTerminal(self._terminal_renderer(), on_pause=self._request_pause),
             )
             self.card_hp = result.hp
             self.card_max_hp = result.max_hp
@@ -375,41 +501,26 @@ class Game:
             return players[client_id]
         return next(iter(players.values()), None) if players else None
 
-    def _camera_offset(self) -> tuple[int, int]:
+    def _camera_offset(self) -> tuple[float, float]:
         max_y, max_x = self.stdscr.getmaxyx()
         player = self._my_player()
         if not player:
             return 0, 0
-        visible_rows = max(1, max_y // self.scale)
+        smooth = getattr(self, "smooth_graphics", True)
+        visible_rows = max(1, max_y / (1 if smooth else self.scale))
         game_width, _, _ = layout_columns(max_x)
-        visible_cols = max(1, game_width // self.scale)
+        visible_cols = max(1, game_width / (2 if smooth else self.scale))
         width = self.game_map.width if self.game_map else visible_cols
         height = self.game_map.height if self.game_map else visible_rows
-        px = float(player.get("x", 0)) + float(player.get("horizontal_progress", 0))
-        py = float(player.get("y", 0)) + float(player.get("vertical_progress", 0))
-        limits = max(0, width - visible_cols), max(0, height - visible_rows)
-        center = [max(0, min(limits[0], px - visible_cols // 2)),
-                  max(0, min(limits[1], py - visible_rows // 2))]
-        previous = getattr(self, "_camera", None)
-        now = time.monotonic()
-        if previous is None or abs(previous[0] - center[0]) > visible_cols or abs(previous[1] - center[1]) > visible_rows:
-            camera = center
-        else:
-            camera = list(previous)
-            elapsed = min(0.1, max(0, now - self._camera_time))
-            alpha = 1 - math.exp(-12 * elapsed)
-            for axis, (position, visible) in enumerate(((px, visible_cols), (py, visible_rows))):
-                offset = position - (camera[axis] + visible // 2)
-                dead_zone = max(1, visible // 6)
-                if abs(offset) > dead_zone:
-                    target = camera[axis] + offset - math.copysign(dead_zone, offset)
-                    camera[axis] += (target - camera[axis]) * alpha
-                camera[axis] = max(0, min(limits[axis], camera[axis]))
-        self._camera, self._camera_time = camera, now
-        return round(camera[0]), round(camera[1])
+        camera = getattr(self, "_camera", None)
+        if not isinstance(camera, Camera):
+            camera = self._camera = Camera()
+        coordinates = player.get("display_position", position(player))
+        cx, cy = camera.follow(coordinates, (visible_cols, visible_rows), (width, height))
+        return (cx, cy) if smooth else (round(cx), round(cy))
 
     def _place_block(self):
-        player = self._my_player()
+        player = self._controlled_player()
         material = self.inventory[self.active_inventory_slot]
         if player is None or material is None:
             return
@@ -418,7 +529,7 @@ class Game:
                     "y": int(player["y"]) + dy, "material": material})
 
     def _adjacent_enemy(self) -> tuple[str | None, dict | None]:
-        player = self._my_player()
+        player = self._controlled_player()
         if not player:
             return None, None
         px, py = int(player.get("x", 0)), int(player.get("y", 0))
@@ -428,7 +539,20 @@ class Game:
                 return enemy_id, enemy
         return None, None
 
-    def _draw_entities(self, camera_x: int, camera_y: int, game_width: int, max_y: int):
+    def _draw_entities(self, camera_x: float, camera_y: float, game_width: int, max_y: int):
+        if self._dot_canvas:
+            camera = camera_x, camera_y
+            for obj in self.state.get("objects", {}).values():
+                if obj.get("type") == "tree":
+                    tree_sprite(self._dot_canvas, obj, camera, curses.color_pair(2))
+                else:
+                    actor_sprite(self._dot_canvas, obj, camera, curses.color_pair(4))
+            for enemy in self.state.get("enemies", {}).values():
+                actor_sprite(self._dot_canvas, enemy, camera, curses.color_pair(5) | curses.A_BOLD)
+            for player_id, player in self.state.get("players", {}).items():
+                pair = 4 if player_id == self.state.get("client_id") else 3
+                actor_sprite(self._dot_canvas, player, camera, curses.color_pair(pair) | curses.A_BOLD)
+            return
         for obj in self.state.get("objects", {}).values():
             attr = curses.color_pair(2) if obj.get("type") == "tree" else curses.color_pair(4)
             self._draw_at(obj, camera_x, camera_y, game_width, max_y, attr)
@@ -476,6 +600,7 @@ class Game:
         self._safe_addstr(10, content_x, "S mine below", panel_width - 3)
         self._safe_addstr(11, content_x, "X card battle", panel_width - 3)
         self._safe_addstr(12, content_x, "B toggle build", panel_width - 3)
+        self._safe_addstr(13, content_x, "V smooth / text", panel_width - 3)
         selected = self.inventory[self.active_inventory_slot] or "empty"
         self._safe_addstr(14, content_x, f"Build: {'ON' if self.building_mode_active else 'OFF'}", panel_width - 3)
         self._safe_addstr(15, content_x, "1 wood / 2 stone", panel_width - 3)

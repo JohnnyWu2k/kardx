@@ -93,8 +93,11 @@ class SandboxController:
             self.messages = self.game.journal_lines()
         elif verb == "save":
             slot = arg or "sandbox"
-            path = self.game.save(slot)
-            self.messages = [f"Saved to {path}."]
+            try:
+                path = self.game.save(slot)
+                self.messages = [f"Saved to {path}."]
+            except (OSError, ValueError) as exc:
+                self.messages = [f"Could not save slot '{slot}': {exc}"]
         elif verb == "load":
             slot = arg or "sandbox"
             try:
@@ -102,6 +105,8 @@ class SandboxController:
                 self.messages = [f"Loaded slot: {slot}."]
             except FileNotFoundError:
                 self.messages = [f"No save slot named '{slot}'."]
+            except (OSError, ValueError) as exc:
+                self.messages = [f"Could not load slot '{slot}': {exc}"]
         else:
             self.messages = ["Unknown command. Type 'help'."]
         return "continue"

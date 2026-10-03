@@ -6,10 +6,13 @@ import socket
 import threading
 import time
 from collections import deque
+from copy import deepcopy
 
 from ttx.world.map import InfiniteGameMap
 from ttx.world.physics import INPUT_STEP, grounded, jump, release_motion, request_jump, step_actor, stop_motion
 from ttx.net.prediction import apply_input
+from ttx.net.protocol import COMMAND_LIMIT, JsonLineReader, ProtocolError, valid_command
+from ttx.net.transport import SnapshotWriter
 from ttx.world.spawn import object_at, spawn_enemies, spawn_objects
 
 HOST = "0.0.0.0"
@@ -26,8 +29,9 @@ enemies: dict[str, dict] = {}
 objects: dict[str, dict] = {}
 custom_tiles: dict[str, dict] = {}
 connections: dict[socket.socket, str] = {}
+snapshot_writers: dict[socket.socket, SnapshotWriter] = {}
 input_queues: dict[str, deque] = {}
-state_lock = threading.Lock()
+state_lock = threading.RLock()
 broadcast_lock = threading.Lock()
 server_stop_event = threading.Event()
 server_socket: socket.socket | None = None
@@ -39,42 +43,57 @@ enemy_rng = random.Random()
 enemy_move_elapsed = 0.0
 simulation_tick = 0
 terrain_revision = 0
+server_lifecycle_lock = threading.Lock()
+server_runtime = None
 
 
 class ServerHandle:
-    def __init__(self, thread: threading.Thread):
-        self.thread = thread
+    def __init__(self, runtime):
+        self.runtime = runtime
+        self.thread = runtime.thread
+
+    @property
+    def port(self):
+        return self.runtime.port
 
     def stop(self):
-        stop_server()
-        self.thread.join(timeout=1.0)
+        self.runtime.stop()
+        self.thread.join()
 
 
 def build_state(client_id: str | None = None) -> dict:
-    return {
-        "client_id": client_id,
-        "players": players,
-        "enemies": enemies,
-        "objects": objects,
-        "custom_tiles": custom_tiles,
-        "map_seed": map_seed,
-        "world_width": world_map.width if world_map else WORLD_WIDTH,
-        "world_height": world_map.height if world_map else WORLD_HEIGHT,
-        "tick": simulation_tick,
-        "terrain_revision": terrain_revision,
-        "world_paused": _world_paused(),
-    }
+    with state_lock:
+        return deepcopy({
+            "client_id": client_id,
+            "players": players,
+            "enemies": enemies,
+            "objects": objects,
+            "custom_tiles": custom_tiles,
+            "map_seed": map_seed,
+            "world_width": world_map.width if world_map else WORLD_WIDTH,
+            "world_height": world_map.height if world_map else WORLD_HEIGHT,
+            "tick": simulation_tick,
+            "terrain_revision": terrain_revision,
+            "world_paused": _world_paused(),
+        })
 
 
 def reset_game_state(world_width: int, world_height: int, seed: int | None = None):
+    with server_lifecycle_lock:
+        if server_runtime is not None and threading.current_thread() is not server_runtime.thread:
+            raise RuntimeError("Cannot reset a running TTX server.")
+        _reset_game_state(world_width, world_height, seed)
+
+
+def _reset_game_state(world_width: int, world_height: int, seed: int | None):
     global map_seed, world_map, enemy_rng, enemy_move_elapsed, simulation_tick, terrain_revision
-    map_seed = seed if seed is not None else random.randint(0, 1_000_000)
-    next_world_map = InfiniteGameMap(max(WORLD_WIDTH, world_width), seed=map_seed,
+    next_seed = seed if seed is not None else random.randint(0, 1_000_000)
+    next_world_map = InfiniteGameMap(max(WORLD_WIDTH, world_width), seed=next_seed,
                                      height=max(WORLD_HEIGHT, world_height))
     next_enemies = spawn_enemies(next_world_map.width, next_world_map.height,
-                                 seed=map_seed, game_map=next_world_map)
+                                 seed=next_seed, game_map=next_world_map)
     next_objects = spawn_objects(next_world_map.width, next_world_map.height,
-                                 seed=map_seed, game_map=next_world_map)
+                                 seed=next_seed, game_map=next_world_map)
     with state_lock:
         players.clear()
         enemies.clear()
@@ -83,29 +102,29 @@ def reset_game_state(world_width: int, world_height: int, seed: int | None = Non
         objects.update(next_objects)
         custom_tiles.clear()
         connections.clear()
+        snapshot_writers.clear()
         input_queues.clear()
+        map_seed = next_seed
         world_map = next_world_map
-        enemy_rng = random.Random(map_seed)
+        enemy_rng = random.Random(next_seed)
         enemy_move_elapsed = 0.0
         simulation_tick = 0
         terrain_revision = 0
 
 
 def broadcast_state():
-    # Serialize writers, but don't hold the simulation lock during socket I/O.
+    # Serialize snapshots under the simulation lock, then publish to independent
+    # writers. A slow connection must never stall world ticks or other clients.
     with broadcast_lock:
         with state_lock:
             state = build_state()
             state.pop("client_id")
-            shared = json.dumps(state, separators=(",", ":")).encode()
-            payloads = [(conn, b'{"client_id":' + json.dumps(client_id).encode() +
-                         b"," + shared[1:] + b"\n") for conn, client_id in connections.items()]
-        for conn, payload in payloads:
-            try:
-                conn.sendall(payload)
-            except OSError:
-                with state_lock:
-                    connections.pop(conn, None)
+            shared = json.dumps(state, separators=(",", ":"), allow_nan=False).encode()
+            payloads = [(snapshot_writers[conn], b'{"client_id":' + json.dumps(client_id).encode() +
+                         b"," + shared[1:] + b"\n") for conn, client_id in connections.items()
+                        if conn in snapshot_writers]
+        for writer, payload in payloads:
+            writer.publish(payload)
 
 
 def tick_world():
@@ -315,20 +334,30 @@ def _update_enemies():
 
 
 def handle_client(conn: socket.socket, addr):
-    conn.settimeout(0.2)
+    if server_stop_event.is_set():
+        conn.close()
+        return
+    try:
+        conn.settimeout(0.2)
+    except OSError:
+        conn.close()
+        return
     try:
         conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     except OSError:
         pass
     client_id = str(addr)
+    writer = SnapshotWriter(conn)
     _log(f"[SERVER] New connection from {client_id}")
     with state_lock:
-        spawn_x, spawn_y = world_map.spawn_position() if world_map else (5, 21)
-        # New players share a safe landing area but not the same grid cell.
-        for offset in range(10):
-            if not _is_occupied(spawn_x + offset, spawn_y):
-                spawn_x += offset
-                break
+        if server_stop_event.is_set():
+            conn.close()
+            return
+        spawn = _player_spawn()
+        if spawn is None:
+            conn.close()
+            return
+        spawn_x, spawn_y = spawn
         players[client_id] = {
             "x": spawn_x,
             "y": spawn_y,
@@ -345,10 +374,11 @@ def handle_client(conn: socket.socket, addr):
             "input_seq": 0,
         }
         connections[conn] = client_id
-    broadcast_state()
-
-    buffer = ""
+        snapshot_writers[conn] = writer
+    reader = JsonLineReader(COMMAND_LIMIT)
     try:
+        writer.start()
+        broadcast_state()
         while not server_stop_event.is_set():
             try:
                 data = conn.recv(4096)
@@ -356,30 +386,50 @@ def handle_client(conn: socket.socket, addr):
                 continue
             if not data:
                 break
-            buffer += data.decode()
-            while "\n" in buffer:
-                line, buffer = buffer.split("\n", 1)
-                if line.strip():
-                    message = json.loads(line)
-                    if message.get("disconnect"):
-                        return
-                    process_message(client_id, message)
+            for message in reader.feed(data):
+                if not valid_command(message):
+                    continue
+                if message.get("disconnect"):
+                    return
+                process_message(client_id, message)
     except (ConnectionAbortedError, ConnectionResetError, OSError):
         pass
-    except Exception as exc:
+    except ProtocolError as exc:
         _log(f"[SERVER] Error processing {client_id}: {exc}")
     finally:
         with state_lock:
             _log(f"[SERVER] Connection closed: {client_id}")
             connections.pop(conn, None)
+            snapshot_writers.pop(conn, None)
             _end_battle(client_id)
             players.pop(client_id, None)
             input_queues.pop(client_id, None)
-        broadcast_state()
+        writer.close()
+        try:
+            conn.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        if writer.thread.ident is not None:
+            writer.thread.join()
         conn.close()
+        broadcast_state()
+
+
+def _player_spawn() -> tuple[int, int] | None:
+    if world_map is None:
+        return (5, 21) if not _is_occupied(5, 21) else None
+    start_x, _ = world_map.spawn_position()
+    for offset in range(world_map.width):
+        x = (start_x + offset) % world_map.width
+        y = world_map.surface_height(x) - 1
+        if not _is_blocked(x, y):
+            return x, y
+    return None
 
 
 def process_message(client_id: str, message: dict):
+    if not valid_command(message):
+        return
     with state_lock:
         if client_id not in players or world_map is None:
             return
@@ -574,65 +624,161 @@ def _grant_enemy_rewards(player: dict, enemy: dict):
         player.setdefault("cards", []).append(random.choice(reward_cards))
 
 
-def server_main(world_width: int, world_height: int, verbose: bool = True):
-    global server_socket, server_verbose
-    server_verbose = verbose
-    server_stop_event.clear()
-    reset_game_state(world_width, world_height)
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket = server
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind((HOST, PORT))
-    server.listen(5)
-    server.settimeout(0.2)
-    simulation = threading.Thread(target=_simulation_loop, daemon=False)
-    simulation.start()
-    _log(f"[SERVER] Listening on port {PORT} with map seed: {map_seed}")
+class _ServerRuntime:
+    """Own the listener and every worker until shutdown has completed."""
+
+    def __init__(self, width: int, height: int, verbose: bool, host: str, port: int):
+        self.width, self.height, self.verbose = width, height, verbose
+        self.host, self.port = host, port
+        self.ready = threading.Event()
+        self.error: Exception | None = None
+        self.socket: socket.socket | None = None
+        self.clients = set()
+        self.handlers = set()
+        self.lock = threading.Lock()
+        self.thread = threading.Thread(target=self._run, name="ttx-server", daemon=False)
+
+    def stop(self):
+        with server_lifecycle_lock:
+            # A handle from an earlier session must not stop a new host.
+            if server_runtime is not self:
+                return
+            server_stop_event.set()
+            with self.lock:
+                clients = list(self.clients)
+        for connection in clients:
+            _shutdown_connection(connection)
+
+    def _handle(self, connection, address):
+        try:
+            handle_client(connection, address)
+        finally:
+            connection.close()
+            with self.lock:
+                self.clients.discard(connection)
+                self.handlers.discard(threading.current_thread())
+
+    def _simulate(self):
+        try:
+            _simulation_loop()
+        except Exception as exc:
+            self.error = exc
+            self.stop()
+
+    def _run(self):
+        global server_socket, server_verbose, server_runtime
+        simulation = None
+        try:
+            server_verbose = self.verbose
+            listener = self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server_socket = listener
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            else:
+                listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind((self.host, self.port))
+            self.port = listener.getsockname()[1]
+            listener.listen(5)
+            listener.settimeout(0.2)
+            reset_game_state(self.width, self.height)
+            simulation = threading.Thread(target=self._simulate, name="ttx-simulation", daemon=False)
+            simulation.start()
+            self.ready.set()
+            _log(f"[SERVER] Listening on port {self.port} with map seed: {map_seed}")
+            while not server_stop_event.is_set():
+                try:
+                    connection, address = listener.accept()
+                except socket.timeout:
+                    continue
+                except OSError:
+                    if server_stop_event.is_set():
+                        break
+                    raise
+                with self.lock:
+                    if server_stop_event.is_set():
+                        connection.close()
+                        break
+                    handler = threading.Thread(target=self._handle, args=(connection, address),
+                                               name="ttx-client", daemon=False)
+                    self.clients.add(connection)
+                    self.handlers.add(handler)
+                    try:
+                        handler.start()
+                    except Exception:
+                        self.clients.discard(connection)
+                        self.handlers.discard(handler)
+                        connection.close()
+                        raise
+        except Exception as exc:
+            self.error = exc
+        finally:
+            self.stop()
+            if self.socket is not None:
+                self.socket.close()
+            self.ready.set()
+            if simulation is not None:
+                simulation.join()
+            with self.lock:
+                handlers = list(self.handlers)
+            for handler in handlers:
+                handler.join()
+            with server_lifecycle_lock:
+                server_socket = None
+                if server_runtime is self:
+                    server_runtime = None
+
+
+def _shutdown_connection(connection):
     try:
-        while not server_stop_event.is_set():
-            try:
-                conn, addr = server.accept()
-            except socket.timeout:
-                continue
-            except OSError:
-                break
-            threading.Thread(target=handle_client, args=(conn, addr), daemon=False).start()
+        connection.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
+
+
+def server_main(world_width: int, world_height: int, verbose: bool = True):
+    handle = start_server(world_width, world_height, verbose)
+    try:
+        handle.thread.join()
     finally:
-        server_stop_event.set()
-        server.close()
-        server_socket = None
-        simulation.join(timeout=2.0)
+        handle.stop()
+    if handle.runtime.error is not None:
+        raise handle.runtime.error
 
 
-def start_server(world_width: int, world_height: int, verbose: bool = True) -> ServerHandle:
-    thread = threading.Thread(
-        target=server_main,
-        args=(world_width, world_height, verbose),
-        daemon=False,
-    )
-    thread.start()
-    time.sleep(0.5)
-    return ServerHandle(thread)
+def start_server(world_width: int, world_height: int, verbose: bool = True,
+                 *, host: str = HOST, port: int = PORT) -> ServerHandle:
+    global server_runtime
+    with server_lifecycle_lock:
+        if server_runtime is not None:
+            raise RuntimeError("A TTX server is already running in this process.")
+        runtime = _ServerRuntime(world_width, world_height, verbose, host, port)
+        server_runtime = runtime
+        server_stop_event.clear()
+        try:
+            runtime.thread.start()
+        except Exception:
+            server_runtime = None
+            raise
+    if not runtime.ready.wait(5.0):
+        runtime.stop()
+        runtime.thread.join()
+        raise TimeoutError("TTX server did not become ready.")
+    if runtime.error is not None:
+        runtime.thread.join()
+        raise runtime.error
+    return ServerHandle(runtime)
 
 
 def stop_server():
+    runtime = server_runtime
+    if runtime is not None:
+        ServerHandle(runtime).stop()
+        return
     server_stop_event.set()
-    if server_socket is not None:
-        try:
-            server_socket.close()
-        except OSError:
-            pass
     with state_lock:
-        for conn in list(connections):
-            try:
-                conn.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-            try:
-                conn.close()
-            except OSError:
-                pass
-        connections.clear()
+        clients = list(connections)
+    for connection in clients:
+        _shutdown_connection(connection)
 
 
 def _log(message: str):

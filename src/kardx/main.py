@@ -8,6 +8,8 @@ def main():
     try:
         app = AppController()
         app.run()
+    except (EOFError, KeyboardInterrupt):
+        pass
     finally:
         show_cursor()
 

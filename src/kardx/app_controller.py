@@ -95,7 +95,12 @@ class AppController:
         """Creates the Game model and, if successful, the GameController."""
         
         print("Loading game...") # Provide feedback to the user
-        game_model = Game(player_id=player_id, enemy_id="enemy_automaton")
+        try:
+            game_model = Game(player_id=player_id, enemy_id="enemy_automaton")
+        except (ValueError, TypeError) as exc:
+            print(f"Failed to load battle data: {exc}")
+            input("Press Enter to return to the main menu...")
+            return MainMenuController()
         
         # --- ROBUSTNESS CHECK (Most important part) ---
         if not game_model.player or not game_model.enemy:

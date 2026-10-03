@@ -14,6 +14,8 @@ def main():
         if not player_id:
             return
         SandboxController(player_id=player_id).run()
+    except (EOFError, KeyboardInterrupt):
+        pass
     finally:
         show_cursor()
 

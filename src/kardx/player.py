@@ -4,6 +4,8 @@ from .card import Card
 
 class Player:
     def __init__(self, name: str, hp: int, mana: int, deck: list[Card]):
+        if type(hp) is not int or hp <= 0 or type(mana) is not int or mana < 0:
+            raise ValueError("Character HP must be a positive integer and mana a nonnegative integer.")
         # ... (attributes remain the same) ...
         self.name = name
         self.max_hp = hp
@@ -58,22 +60,25 @@ class Player:
 
     # ... (take_damage, add_def, etc. are unchanged from the last correct version) ...
     def take_damage(self, amount: int) -> dict:
+        amount = max(0, amount)
         damage_blocked = min(self.defend, amount)
-        damage_dealt = amount - damage_blocked
+        damage_dealt = min(self.hp, amount - damage_blocked)
         self.hp -= damage_dealt
         self.defend -= damage_blocked
         return {'dealt': damage_dealt, 'blocked': damage_blocked}
 
-    def add_def(self, amount: int): self.defend += amount
+    def add_def(self, amount: int): self.defend = max(0, self.defend + amount)
     def add_mana(self, amount: int): self.mana = min(self.max_mana, max(0, self.mana + amount))
-    def add_max_mana(self, amount: int): self.max_mana = max(0, self.max_mana + amount)
+    def add_max_mana(self, amount: int):
+        self.max_mana = max(0, self.max_mana + amount)
+        self.mana = min(self.mana, self.max_mana)
     def add_hp(self, amount: int) -> int:
         original_hp = self.hp
-        self.hp = min(self.max_hp, self.hp + amount)
+        self.hp = max(0, min(self.max_hp, self.hp + amount))
         return self.hp - original_hp
-    def set_hp(self, value: int): self.hp = min(self.max_hp, value)
+    def set_hp(self, value: int): self.hp = max(0, min(self.max_hp, value))
     def discard_card(self, card_index: int):
-        if 0 <= card_index < len(self.hand):
+        if type(card_index) is int and 0 <= card_index < len(self.hand):
             card = self.hand.pop(card_index)
             self.discard_pile.append(card)
             return card

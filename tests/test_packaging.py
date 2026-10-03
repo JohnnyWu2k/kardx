@@ -27,3 +27,11 @@ class PackagingTests(unittest.TestCase):
                 resource = data.joinpath(f"{name}.jsonc")
                 self.assertTrue(resource.is_file())
                 self.assertTrue(resource.read_text(encoding="utf-8").strip())
+
+    def test_pixel_art_assets_are_packaged(self):
+        assets = files("ttx").joinpath("assets")
+        for name in ("woodland_tree.png", "grass_road.png"):
+            with self.subTest(asset=name):
+                resource = assets.joinpath(name)
+                self.assertTrue(resource.is_file())
+                self.assertGreater(len(resource.read_bytes()), 0)

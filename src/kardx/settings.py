@@ -1,7 +1,9 @@
 import json5
+import math
 import os
 from pathlib import Path
 from .loader import load_packaged_json5_data
+from .persistence import atomic_write_text
 
 class Settings:
     """Manages loading, accessing, and saving game settings."""
@@ -12,27 +14,48 @@ class Settings:
 
     def _load_defaults(self) -> dict:
         """Returns the default settings in case the file is missing."""
-        packaged_defaults = load_packaged_json5_data("settings.jsonc")
-        if isinstance(packaged_defaults, dict):
-            return packaged_defaults
-        return {
+        defaults = {
             "show_enemy_hand": True,
             "enable_colors": True,
             "enable_menu_animations": True,
             "animation_speed_multiplier": 1.0,
             "color_theme": "default",
         }
+        packaged_defaults = load_packaged_json5_data("settings.jsonc")
+        return self._validated(packaged_defaults, defaults) if isinstance(packaged_defaults, dict) else defaults
 
     def load(self):
         """Loads settings from the JSONC file."""
-        try:
-            with open(self.path, 'r', encoding='utf-8') as f:
-                user_settings = json5.load(f)
-                self.data.update(user_settings)
-        except FileNotFoundError:
-            self._save_with_fallback()
-        except Exception:
-            self._save_with_fallback()
+        defaults = self._load_defaults()
+        self.data = dict(defaults)
+        paths = [self.path]
+        if self.path == _default_settings_file():
+            paths.insert(0, Path.cwd() / ".kardx" / "settings.jsonc")
+        for path in paths:
+            try:
+                with path.open('r', encoding='utf-8') as stream:
+                    user_settings = json5.load(stream)
+            except (OSError, ValueError):
+                continue
+            if isinstance(user_settings, dict):
+                self.data = self._validated(user_settings, defaults)
+                self.path = path
+                return
+        # Reading defaults must not create files or overwrite a malformed copy.
+
+    @staticmethod
+    def _validated(values: dict, defaults: dict) -> dict:
+        data = {**defaults, **values}
+        for key in ("show_enemy_hand", "enable_colors", "enable_menu_animations"):
+            if type(data.get(key)) is not bool:
+                data[key] = defaults[key]
+        speed = data.get("animation_speed_multiplier")
+        if type(speed) not in (int, float) or type(speed) is float and not math.isfinite(speed):
+            speed = defaults["animation_speed_multiplier"]
+        data["animation_speed_multiplier"] = float(max(0.1, min(2.0, speed)))
+        if data.get("color_theme") not in ("default", "ocean", "forest"):
+            data["color_theme"] = defaults["color_theme"]
+        return data
 
     def _save_with_fallback(self):
         try:
@@ -43,14 +66,12 @@ class Settings:
 
     def save(self):
         """Saves the current settings to the JSONC file in a strict, compatible format."""
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.path, 'w', encoding='utf-8') as f:
-            f.write(json5.dumps(
-                self.data, 
-                indent=2, 
-                quote_keys=True,
-                trailing_commas=False
-            ))
+        atomic_write_text(self.path, json5.dumps(
+            self.data,
+            indent=2,
+            quote_keys=True,
+            trailing_commas=False,
+        ))
 
     def get(self, key: str, default=None):
         """Gets a setting value by key."""
@@ -58,7 +79,7 @@ class Settings:
 
     def set(self, key: str, value):
         """Sets a setting value and saves it."""
-        self.data[key] = value
+        self.data = self._validated({**self.data, key: value}, self._load_defaults())
         self._save_with_fallback()
 
 

@@ -6,7 +6,7 @@ from collections import deque
 from ...card import Card
 from ...player import Player
 from ...settings import settings_manager
-from ...view_utils import Colors, get_visible_len, render_screen, terminal_size
+from ...view_utils import Colors, fit_to_width, get_visible_len, render_screen, terminal_size
 
 
 class GameView:
@@ -20,8 +20,8 @@ class GameView:
         if get_visible_len(text) <= width:
             return text
         if width <= 1:
-            return text[:width]
-        return text[:width - 1] + "~"
+            return fit_to_width(text, width)
+        return fit_to_width(text, width - 1) + "~"
 
     def _pad_str(self, text: str, width: int) -> str:
         return text + " " * max(0, width - get_visible_len(text))
@@ -50,7 +50,7 @@ class GameView:
 
         lines = [top, f"| {self._pad_str(title_line, inner_width)} |"]
         for desc in wrapped:
-            lines.append(f"| {self._pad_str(desc, inner_width)} |")
+            lines.append(f"| {self._fit_line(desc, inner_width)} |")
         lines.append(bottom)
         return lines[:card_height]
 
@@ -76,13 +76,18 @@ class GameView:
                 (f"[{card.name}]" if i == selected_index else card.name)
                 for i, card in enumerate(player.hand)
             )
+            if get_visible_len(names) > width and selected_index is not None and selected_index >= 0:
+                names = f"{selected_index + 1}/{len(player.hand)} [{player.hand[selected_index].name}]"
             return [self._fit_line(names, width)]
 
         columns, card_width = self._hand_layout(len(player.hand), width)
         card_height = 8 if max_lines >= 8 else max(5, max_lines)
         rows: list[str] = []
+        visible_rows = max(1, (max_lines + 1) // (card_height + 1))
+        selected_row = max(0, selected_index or 0) // columns
+        first_row = max(0, selected_row - visible_rows + 1)
 
-        for start in range(0, len(player.hand), columns):
+        for start in range(first_row * columns, len(player.hand), columns):
             chunk = player.hand[start:start + columns]
             rendered_cards = [
                 self._format_card(card, start + idx == selected_index, card_width, card_height)

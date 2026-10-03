@@ -3,6 +3,7 @@
 import math
 
 from ttx.world.physics import position
+from ttx.world.sprites import load_sprite
 
 DOT_BITS = ((1, 8), (2, 16), (4, 32), (64, 128))
 BLOCKS = {0: " ", 255: "█", 71: "▌", 184: "▐", 27: "▀", 228: "▄"}
@@ -72,6 +73,10 @@ def terrain(canvas: DotCanvas, game_map, camera: tuple[float, float], custom_til
             tile = override["char"] if override else game_map.get_tile(x, y)
             if tile == game_map.AIR or tile == " ":
                 continue
+            if tile == '"':
+                load_sprite("road").blit(canvas, x * TILE_PIXELS - ox, y * TILE_PIXELS - oy,
+                                         source_x=(x % 2) * TILE_PIXELS, width=TILE_PIXELS)
+                continue
             canvas.rectangle(x * TILE_PIXELS - ox, y * TILE_PIXELS - oy, TILE_PIXELS, TILE_PIXELS,
                              attributes.get(tile, 0))
 
@@ -87,11 +92,8 @@ def actor_sprite(canvas: DotCanvas, actor: dict, camera: tuple[float, float], at
 
 def tree_sprite(canvas: DotCanvas, actor: dict, camera: tuple[float, float], attr: int):
     cx, cy = project(actor, camera)
-    for dy in range(-4, 2):
-        canvas.dot(cx, cy + dy, attr, priority=1)
-    for dy, half_width in ((-6, 0), (-5, 1), (-4, 2), (-3, 1)):
-        for dx in range(-half_width, half_width + 1):
-            canvas.dot(cx + dx, cy + dy, attr, priority=1)
+    sprite = load_sprite("tree")
+    sprite.blit(canvas, cx - sprite.width // 2, cy - sprite.height + 2)
 
 
 def marker(canvas: DotCanvas, actor: dict, camera: tuple[float, float], attr: int):

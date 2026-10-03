@@ -1,5 +1,4 @@
 import re
-import math
 from collections import deque
 from .loader import load_game_data
 from .card import Card
@@ -36,8 +35,15 @@ class Game:
 
     def _load_data(self, filename: str) -> dict:
         data = load_game_data(filename)
-        if not data: print(f"CRITICAL ERROR: Failed to load {filename}. Exiting."); return {}
-        if filename == "cards.jsonc": return {item['id']: Card(**item) for item in data}
+        if filename == "cards.jsonc":
+            if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
+                raise ValueError("cards.jsonc must contain a list of card definitions.")
+            cards = [Card(**item) for item in data]
+            if len({card.id for card in cards}) != len(cards):
+                raise ValueError("cards.jsonc contains duplicate card ids.")
+            return {card.id: card for card in cards}
+        if not isinstance(data, dict) or any(not isinstance(item, dict) for item in data.values()):
+            raise ValueError(f"{filename} must contain an object of character definitions.")
         return data
 
     def _create_character(
@@ -49,16 +55,19 @@ class Game:
         max_mana_bonus: int = 0,
     ) -> Player | None:
         char_def = self.character_definitions.get(character_id)
-        if not char_def: print(f"ERROR: Character '{character_id}' not found."); return None
+        if not char_def:
+            return None
         deck = []
         if deck_override is not None:
             for card_id in deck_override:
                 if card_id in self.all_cards: deck.append(self.all_cards[card_id])
-                else: print(f"Warning: Card '{card_id}' not found.")
+                else: raise ValueError(f"Character '{character_id}' references missing card '{card_id}'.")
         else:
             for card_id, count in char_def.get("deck", {}).items():
+                if type(count) is not int or count < 0:
+                    raise ValueError(f"Character '{character_id}' has an invalid count for card '{card_id}'.")
                 if card_id in self.all_cards: deck.extend([self.all_cards[card_id]] * count)
-                else: print(f"Warning: Card '{card_id}' not found.")
+                else: raise ValueError(f"Character '{character_id}' references missing card '{card_id}'.")
         hp = hp_override if hp_override is not None else char_def.get("hp", 10)
         mana = mana_override if mana_override is not None else char_def.get("mana", 3)
         return Player(
@@ -89,7 +98,7 @@ class Game:
                 if op == '+': return lhs + rhs
                 if op == '-': return lhs - rhs
                 if op == '*': return lhs * rhs
-                if op == '/' and rhs != 0: return math.ceil(lhs / rhs)
+                if op == '/' and rhs != 0: return -(-lhs // rhs)
                 return 0
             else: return int(expression_str)
         except (ValueError, TypeError): self._log(f"Warning: Could not parse expression '{expr}'"); return 0
@@ -105,18 +114,20 @@ class Game:
             value = self._evaluate_expression(effect.get("value", 0), source, target)
             action = effect.get("action")
 
+            if (
+                source == self.player
+                and eff_target_obj == self.enemy
+                and card.type == "Attack"
+                and (action == "deal_damage" or action == "add_hp" and value < 0)
+                and not self.first_attack_bonus_used
+                and self.battle_modifiers.get("first_attack_damage_bonus", 0) > 0
+            ):
+                bonus = self.battle_modifiers["first_attack_damage_bonus"]
+                value += bonus if action == "deal_damage" else -bonus
+                self.first_attack_bonus_used = True
+                self._log(f"Relic power adds {bonus} damage.")
+
             if action == "deal_damage":
-                if (
-                    source == self.player
-                    and eff_target_obj == self.enemy
-                    and card.type == "Attack"
-                    and not self.first_attack_bonus_used
-                    and self.battle_modifiers.get("first_attack_damage_bonus", 0) > 0
-                ):
-                    bonus = self.battle_modifiers["first_attack_damage_bonus"]
-                    value += bonus
-                    self.first_attack_bonus_used = True
-                    self._log(f"Relic power adds {bonus} damage.")
                 # Get the detailed report from the method that actually changes the state
                 damage_report = eff_target_obj.take_damage(value)
                 damage_done = damage_report['dealt']
@@ -177,6 +188,8 @@ class Game:
         """Initializes the battle state, including initial card draw."""
         if self.player and self.enemy:
             self.is_running = True
+            if self._check_battle_over():
+                return
             self._log(f"A wild {self.enemy.name} appears!")
             
             # Both players draw their starting hands at the very beginning
@@ -189,6 +202,8 @@ class Game:
 
     def start_player_turn(self):
         """Prepares for the player's turn."""
+        if not self.is_running:
+            return
         # The hand limit is now passed to the player method
         # We no longer need the initial draw here, as it's done in start_battle
         # The start_turn method will handle refilling mana and resetting defend
@@ -208,7 +223,9 @@ class Game:
     ### MODIFIED: Returns events from _apply_effects ###
     def play_card(self, card_index: int) -> tuple[str, list[dict]]:
         """Attempts to play a card. Returns a status and a list of animation events."""
-        if not 0 <= card_index < len(self.player.hand):
+        if not self.is_running:
+            return "battle_over", []
+        if type(card_index) is not int or not 0 <= card_index < len(self.player.hand):
             return "invalid_card", []
         
         card_to_play = self.player.hand[card_index]
@@ -222,14 +239,14 @@ class Game:
         events = self._apply_effects(played_card, self.player, self.enemy)
         self.player.discard_pile.append(played_card)
         
-        if self.enemy.hp <= 0:
-            self.is_running = False
-            self._log(f"{self.enemy.name} has been defeated!")
+        self._check_battle_over()
         
         return "success", events
 
     def discard_player_card(self, card_index: int) -> str:
         """Discards a card from the player's hand without playing it."""
+        if not self.is_running:
+            return "battle_over"
         discarded = self.player.discard_card(card_index)
         if not discarded:
             return "invalid_card"
@@ -251,16 +268,24 @@ class Game:
 
     def play_enemy_card(self, card: Card) -> list[dict]:
         """Executes a single enemy card play and returns animation events."""
-        if not self.is_running: return []
+        if not self.is_running or card not in self.enemy.hand or self.enemy.mana < card.cost:
+            return []
         self.enemy.mana -= card.cost
         self.enemy.hand.remove(card)
         events = self._apply_effects(card, self.enemy, self.player)
         self.enemy.discard_pile.append(card)
         
-        if self.player.hp <= 0:
-            self.is_running = False
-            self._log(f"{self.player.name} has been defeated!")
+        self._check_battle_over()
         return events
+
+    def _check_battle_over(self) -> bool:
+        """Resolve all effects before checking either actor, including self damage."""
+        defeated = [actor for actor in (self.player, self.enemy) if actor and actor.hp <= 0]
+        if defeated:
+            self.is_running = False
+            for actor in defeated:
+                self._log(f"{actor.name} has been defeated!")
+        return bool(defeated)
 
     def end_enemy_turn(self):
         """Cleans up after the enemy's turn."""

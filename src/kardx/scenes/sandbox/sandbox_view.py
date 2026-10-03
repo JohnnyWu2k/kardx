@@ -2,7 +2,7 @@ import re
 import sys
 from shutil import get_terminal_size
 
-from ...view_utils import fit_to_width, get_visible_len, show_cursor
+from ...view_utils import fit_to_width, get_visible_len, invalidate_screen, show_cursor
 
 
 class SandboxView:
@@ -18,6 +18,7 @@ class SandboxView:
     RESET = "\033[0m"
 
     def display(self, lines: list[str], prompt: str = ""):
+        invalidate_screen()
         width, height = get_terminal_size(fallback=(80, 24))
         width = max(50, width)
         body = self._frame(lines, width)

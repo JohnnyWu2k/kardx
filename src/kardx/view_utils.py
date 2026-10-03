@@ -67,13 +67,17 @@ def terminal_size() -> tuple[int, int]:
     return max(40, size.columns), max(16, size.lines)
 
 
+def invalidate_screen():
+    global _last_lines, _last_size, _last_stream
+    _last_lines, _last_size, _last_stream = [], None, None
+
+
 def clear_screen():
-    global _last_lines, _last_size
     terminal = _terminal.get()
     if terminal is not None:
         terminal.render([])
         return
-    _last_lines, _last_size = [], None
+    invalidate_screen()
     sys.stdout.write("\033[?25l\033[H\033[J")
     sys.stdout.flush()
 
@@ -129,17 +133,22 @@ def get_visible_len(s: str) -> int:
 
 
 def fit_to_width(text: str, width: int) -> str:
+    if width <= 0:
+        return ""
     visible_width = 0
     output = []
     index = 0
-    while index < len(text) and visible_width < width:
+    while index < len(text):
         if text[index] == "\033":
             match = re.match(r'\033\[[0-9;]*m', text[index:])
             if match:
                 output.append(match.group(0))
                 index += len(match.group(0))
                 continue
-        char_width = max(0, wcwidth(text[index]))
+        char_width = wcwidth(text[index])
+        if char_width < 0:
+            index += 1
+            continue
         if visible_width + char_width > width:
             break
         output.append(text[index])

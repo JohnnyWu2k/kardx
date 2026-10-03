@@ -2,7 +2,6 @@
 
 import math
 import random
-from functools import lru_cache
 
 try:
     import curses
@@ -22,6 +21,7 @@ class InfiniteGameMap:
         self.chunk_width = max(1, chunk_width)
         self.seed = seed if seed is not None else random.randint(0, 1_000_000)
         self.chunks: dict[tuple[int, int], list[list[str]]] = {}
+        self._surface_heights: dict[int, int] = {}
 
     def _hash(self, x: int, y: int, salt: int = 0) -> float:
         value = (x * 374761393 + y * 668265263 + self.seed * 1442695041 + salt * 1013904223) & 0xFFFFFFFF
@@ -36,14 +36,17 @@ class InfiniteGameMap:
         c, d = self._hash(ix, iy + 1, salt), self._hash(ix + 1, iy + 1, salt)
         return (a + (b - a) * tx) * (1 - ty) + (c + (d - c) * tx) * ty
 
-    @lru_cache(maxsize=2048)
     def surface_height(self, x: int) -> int:
+        if x in self._surface_heights:
+            return self._surface_heights[x]
         elevation = (self._noise(x / 96, 0, 1) - 0.5) * 18
         elevation += (self._noise(x / 32, 0, 2) - 0.5) * 8
         elevation += (self._noise(x / 12, 0, 3) - 0.5) * 3
         # Blend the level landing area into the surrounding hills.
         blend = min(1.0, max(0.0, (x - 12) / 12))
-        return round(22 + elevation * blend)
+        height = round(22 + elevation * blend)
+        self._surface_heights[x] = height
+        return height
 
     def spawn_position(self) -> tuple[int, int]:
         x = min(5, self.width - 1)

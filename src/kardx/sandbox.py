@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import random
+import re
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .game_state import Game
 from .loader import get_user_data_dir, load_game_data
+from .persistence import atomic_write_text
 
 
 @dataclass
@@ -30,7 +33,7 @@ class RunState:
     turn_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        return deepcopy({
             "player_id": self.player_id,
             "player_name": self.player_name,
             "max_hp": self.max_hp,
@@ -47,33 +50,55 @@ class RunState:
             "forage_cooldowns": self.forage_cooldowns,
             "room_items": self.room_items,
             "turn_count": self.turn_count,
-        }
+        })
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> RunState:
+        if not isinstance(payload, dict):
+            raise ValueError("Save data must be an object.")
+
+        def text(value, field):
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"Invalid save field '{field}': expected a nonempty string.")
+            return value
+
+        def number(value, field, minimum=0):
+            if type(value) is not int or value < minimum:
+                raise ValueError(f"Invalid save field '{field}': expected an integer >= {minimum}.")
+            return value
+
+        def strings(value, field):
+            if not isinstance(value, list):
+                raise ValueError(f"Invalid save field '{field}': expected a list.")
+            return [text(item, field) for item in value]
+
+        def mapping(value, field, validate):
+            if not isinstance(value, dict):
+                raise ValueError(f"Invalid save field '{field}': expected an object.")
+            return {text(key, field): validate(item, field) for key, item in value.items()}
+
+        player_id = text(payload.get("player_id"), "player_id")
+        max_hp = number(payload.get("max_hp"), "max_hp", 1)
+        current_hp = number(payload.get("current_hp"), "current_hp", 1)
+        if current_hp > max_hp:
+            raise ValueError("Invalid save field 'current_hp': exceeds max_hp.")
         return cls(
-            player_id=payload["player_id"],
-            player_name=payload.get("player_name", payload["player_id"]),
-            max_hp=int(payload["max_hp"]),
-            current_hp=int(payload["current_hp"]),
-            base_mana=int(payload["base_mana"]),
-            deck_ids=list(payload["deck_ids"]),
-            current_room=payload["current_room"],
-            gold=int(payload.get("gold", 0)),
-            inventory={key: int(value) for key, value in payload.get("inventory", {}).items()},
-            flags=set(payload.get("flags", [])),
-            quests=dict(payload.get("quests", {})),
-            defeated_encounters=set(payload.get("defeated_encounters", [])),
-            visited_rooms=set(payload.get("visited_rooms", [])),
-            forage_cooldowns={
-                key: int(value)
-                for key, value in payload.get("forage_cooldowns", {}).items()
-            },
-            room_items={
-                key: list(value)
-                for key, value in payload.get("room_items", {}).items()
-            },
-            turn_count=int(payload.get("turn_count", 0)),
+            player_id=player_id,
+            player_name=text(payload.get("player_name", player_id), "player_name"),
+            max_hp=max_hp,
+            current_hp=current_hp,
+            base_mana=number(payload.get("base_mana"), "base_mana"),
+            deck_ids=strings(payload.get("deck_ids"), "deck_ids"),
+            current_room=text(payload.get("current_room"), "current_room"),
+            gold=number(payload.get("gold", 0), "gold"),
+            inventory=mapping(payload.get("inventory", {}), "inventory", number),
+            flags=set(strings(payload.get("flags", []), "flags")),
+            quests=mapping(payload.get("quests", {}), "quests", text),
+            defeated_encounters=set(strings(payload.get("defeated_encounters", []), "defeated_encounters")),
+            visited_rooms=set(strings(payload.get("visited_rooms", []), "visited_rooms")),
+            forage_cooldowns=mapping(payload.get("forage_cooldowns", {}), "forage_cooldowns", number),
+            room_items=mapping(payload.get("room_items", {}), "room_items", strings),
+            turn_count=number(payload.get("turn_count", 0), "turn_count"),
         )
 
     def add_item(self, item_id: str, amount: int = 1):
@@ -146,6 +171,9 @@ class SandboxData:
                 for effect in talk_def.get("effects", []):
                     self._validate_effect(effect, errors, f"room '{room_id}' talk")
         for recipe_id, recipe in self.recipes.items():
+            costs = recipe.get("requires", {})
+            if not isinstance(costs, dict) or any(type(amount) is not int or amount <= 0 for amount in costs.values()):
+                errors.append(f"Recipe '{recipe_id}' material costs must be positive integers.")
             for effect in recipe.get("effects", []):
                 self._validate_effect(effect, errors, f"recipe '{recipe_id}'")
         for encounter_id, encounter in self.encounters.items():
@@ -155,6 +183,9 @@ class SandboxData:
                 errors.append(f"Encounter '{encounter_id}' references missing room '{room_id}'.")
             if enemy_id not in self.characters:
                 errors.append(f"Encounter '{encounter_id}' references missing enemy '{enemy_id}'.")
+            retreat_room = encounter.get("retreat_room")
+            if retreat_room is not None and retreat_room not in rooms:
+                errors.append(f"Encounter '{encounter_id}' references missing retreat room '{retreat_room}'.")
             for card_id in encounter.get("card_rewards", []):
                 if card_id not in self.cards:
                     errors.append(f"Encounter '{encounter_id}' rewards missing card '{card_id}'.")
@@ -249,9 +280,10 @@ class SandboxGame:
     def use(self, item_id: str) -> list[str]:
         if self.state.inventory.get(item_id, 0) <= 0:
             return [f"You don't have '{item_id}'."]
-        if item_id == "key" and self.state.current_room == "hall":
-            self.state.flags.add(self._unlock_flag("hall", "north"))
-            return ["You unlock the iron gate to the north."]
+        for direction, lock in self.room().get("locked_exits", {}).items():
+            if lock.get("requires_item") == item_id:
+                self.state.flags.add(self._unlock_flag(self.state.current_room, direction))
+                return [f"You unlock the way to the {direction}."]
         if item_id == "healing_potion":
             before = self.state.current_hp
             self.state.current_hp = min(self.state.max_hp, self.state.current_hp + 12)
@@ -284,13 +316,31 @@ class SandboxGame:
         return [f"You forage and find: {found}."]
 
     def craft(self, recipe_id: str) -> list[str]:
+        self._require_state()
         recipe = self.data.recipes.get(recipe_id)
         if not recipe:
             return [f"Unknown recipe: {recipe_id}."]
-        required = {key: int(value) for key, value in recipe.get("requires", {}).items()}
+        required = recipe.get("requires", {})
+        if not isinstance(required, dict) or any(type(amount) is not int or amount <= 0 for amount in required.values()):
+            return [f"Recipe '{recipe_id}' has invalid material costs."]
         if not self.state.has_items(required):
             needs = ", ".join(f"{amount} {item_id}" for item_id, amount in required.items())
             return [f"Need: {needs}."]
+        deck = list(self.state.deck_ids)
+        for effect in recipe.get("effects", []):
+            if effect.get("action") == "upgrade_card":
+                source, target = effect.get("from"), effect.get("to")
+                if source not in deck:
+                    return [f"No {self.card_name(source)} available to upgrade."]
+                if target not in self.data.cards:
+                    return [f"Unknown card: {target}."]
+                deck.remove(source)
+                deck.append(target)
+            elif effect.get("action") == "add_card":
+                card_id = effect.get("card")
+                if card_id not in self.data.cards:
+                    return [f"Unknown card: {card_id}."]
+                deck.append(card_id)
         for item_id, amount in required.items():
             self.state.add_item(item_id, -amount)
         messages = [f"Crafted: {recipe.get('name', recipe_id)}."]
@@ -386,7 +436,7 @@ class SandboxGame:
             action = effect.get("action")
             value = int(effect.get("value", 0))
             if action == "add_item":
-                amount = value or 1
+                amount = int(effect.get("value", 1))
                 item_id = effect.get("item")
                 self.state.add_item(item_id, amount)
                 messages.append(f"Item {'+' if amount >= 0 else ''}{amount}: {item_id}.")
@@ -414,7 +464,7 @@ class SandboxGame:
             elif action == "start_quest":
                 quest = effect.get("quest")
                 if quest:
-                    self.state.quests[quest] = "active"
+                    self.state.quests.setdefault(quest, "active")
             elif action == "complete_quest":
                 quest = effect.get("quest")
                 if quest:
@@ -423,21 +473,30 @@ class SandboxGame:
 
     def save(self, slot: str = "sandbox", save_dir: Path | None = None) -> Path:
         self._require_state()
-        base_dir = save_dir or (get_user_data_dir().parent / "saves")
-        base_dir.mkdir(parents=True, exist_ok=True)
-        path = base_dir / f"{slot}.json"
-        path.write_text(json.dumps(self.state.to_dict(), indent=2), encoding="utf-8")
+        path = self._save_path(slot, save_dir)
+        atomic_write_text(path, json.dumps(self.state.to_dict(), indent=2))
         return path
 
     def load(self, slot: str = "sandbox", save_dir: Path | None = None) -> RunState:
-        base_dir = save_dir or (get_user_data_dir().parent / "saves")
-        path = base_dir / f"{slot}.json"
+        path = self._save_path(slot, save_dir)
         payload = json.loads(path.read_text(encoding="utf-8"))
         state = RunState.from_dict(payload)
         if state.current_room not in self.data.rooms:
             raise ValueError(f"Save references missing room '{state.current_room}'.")
+        if state.player_id not in self.data.characters:
+            raise ValueError(f"Save references missing player '{state.player_id}'.")
+        missing_cards = set(state.deck_ids) - self.data.cards.keys()
+        if missing_cards:
+            raise ValueError(f"Save references missing cards: {', '.join(sorted(missing_cards))}.")
         self.state = state
         return self.state
+
+    @staticmethod
+    def _save_path(slot: str, save_dir: Path | None) -> Path:
+        if not isinstance(slot, str) or not re.fullmatch(r"[\w-]{1,64}", slot):
+            raise ValueError("Save slot must contain 1-64 letters, numbers, underscores or hyphens.")
+        base_dir = save_dir if save_dir is not None else get_user_data_dir().parent / "saves"
+        return base_dir / f"{slot}.json"
 
     def card_name(self, card_id: str | None) -> str:
         if not card_id:

@@ -6,10 +6,11 @@ import curses
 import re
 import time
 
-from wcwidth import wcwidth
+from wcwidth import wcwidth, wcswidth
 
 SGR = re.compile(r"\033\[([0-9;]*)m")
 COLOR_PAIRS = {31: 5, 32: 2, 33: 7, 34: 8, 35: 9, 36: 4, 37: 3}
+BATTLE_STEPS = 9
 
 
 class Frame:
@@ -26,8 +27,20 @@ class Frame:
         return frame
 
     def addch(self, y: int, x: int, char: str, attr: int = 0):
-        if 0 <= y < self.rows and 0 <= x < self.columns:
-            self.cells[y][x] = (char, attr)
+        width = wcwidth(char) if len(char) == 1 else wcswidth(char)
+        if not (0 <= y < self.rows and 0 <= x and width in (1, 2) and x + width <= self.columns):
+            return
+        row = self.cells[y]
+        for column in range(x, x + width):
+            old_char = row[column][0]
+            if old_char == "" and column > 0:
+                row[column - 1] = (" ", 0)
+            elif old_char != " " and wcswidth(old_char) == 2 and column + 1 < self.columns:
+                row[column + 1] = (" ", 0)
+            row[column] = (" ", 0)
+        row[x] = (char, attr)
+        if width == 2:
+            row[x + 1] = ("", attr)
 
     def addstr(self, y: int, x: int, text: str, attr: int = 0):
         if not 0 <= y < self.rows:
@@ -36,7 +49,7 @@ class Frame:
         while index < len(text):
             match = SGR.match(text, index)
             if match:
-                for code in map(int, match.group(1).split(";") if match.group(1) else ["0"]):
+                for code in (int(code or "0") for code in match.group(1).split(";")):
                     if code == 0:
                         attr = 0
                     elif code == 1:
@@ -47,6 +60,8 @@ class Frame:
                         attr |= curses.A_REVERSE
                     elif code == 22:
                         attr &= ~(curses.A_BOLD | curses.A_DIM)
+                    elif code == 39:
+                        attr &= ~curses.A_COLOR
                     elif 30 <= code <= 37 or 90 <= code <= 97:
                         base = code - 60 if code >= 90 else code
                         attr = (attr & ~curses.A_COLOR) | curses.color_pair(COLOR_PAIRS.get(base, 3))
@@ -67,8 +82,6 @@ class Frame:
                     break
                 if x >= 0 and x + width <= self.columns:
                     self.addch(y, x, char, attr)
-                    for offset in range(1, width):
-                        self.addch(y, x + offset, "", attr)
                 x += width
             index += 1
 
@@ -77,6 +90,7 @@ class TerminalRenderer:
     def __init__(self, screen):
         self.screen = screen
         self.last: Frame | None = None
+        self._battle_source: Frame | None = None
 
     def frame(self) -> Frame:
         return Frame(*self.screen.getmaxyx())
@@ -136,15 +150,74 @@ class TerminalRenderer:
             if step < steps:
                 time.sleep(max(0, started + duration * step / (steps - 1) - time.monotonic()))
 
+    @property
+    def battle_transition_active(self) -> bool:
+        return self._battle_source is not None
+
+    def _battle_veil(self, base: Frame, progress: float, pulse: int) -> Frame:
+        frame = base.copy()
+        if progress <= 0:
+            return frame
+        width, height = max(1, frame.columns - 1), max(1, frame.rows - 1)
+        color = curses.color_pair(9)
+        for y in range(frame.rows):
+            for x in range(frame.columns):
+                diagonal = (x / width + y / height) / 2
+                if diagonal > progress:
+                    continue
+                sparkle = (abs(diagonal - progress) < 0.055 and (x * 7 + y * 11 + pulse) % 9 == 0)
+                sparkle |= (progress >= 1 and (x * 13 + y * 17 + pulse * 5) % 73 == 0)
+                symbol = "*" if sparkle else ("▒" if (x + y) % 2 else "░")
+                attribute = color | (curses.A_BOLD if sparkle else curses.A_DIM)
+                frame.addch(y, x, symbol, attribute)
+        return frame
+
+    def begin_battle_transition(self, duration: float = 0.24):
+        source = self.last if self.last and self.last.getmaxyx() == self.screen.getmaxyx() else self.frame()
+        self._battle_source = source.copy()
+        started = time.monotonic()
+        for step in range(1, BATTLE_STEPS + 1):
+            self.present(self._battle_veil(self._battle_source, step / BATTLE_STEPS, step))
+            if step < BATTLE_STEPS:
+                time.sleep(max(0, started + duration * step / BATTLE_STEPS - time.monotonic()))
+
+    def wait_battle_transition(self, ready, timeout: float | None = None) -> bool:
+        """Keep the covered scene alive while data or images finish loading."""
+        deadline = None if timeout is None else time.monotonic() + timeout
+        pulse = 0
+        while not ready():
+            if deadline is not None and time.monotonic() >= deadline:
+                return False
+            source = self._battle_source
+            if source is None:
+                return ready()
+            self.present(self._battle_veil(source, 1.0, pulse))
+            pulse += 1
+            time.sleep(min(0.05, max(0.0, deadline - time.monotonic())) if deadline is not None else 0.05)
+        return True
+
+    def complete_battle_transition(self, target: Frame, duration: float = 0.24):
+        source = self._battle_source
+        self._battle_source = None
+        if source is None or source.getmaxyx() != target.getmaxyx():
+            self.transition(target)
+            return
+        started = time.monotonic()
+        for step in range(1, BATTLE_STEPS + 1):
+            self.present(self._battle_veil(target, 1 - step / BATTLE_STEPS, step))
+            if step < BATTLE_STEPS:
+                time.sleep(max(0, started + duration * step / BATTLE_STEPS - time.monotonic()))
+
 
 class CardTerminal:
     """Adapt Kardx's existing view and key interface to the same curses screen."""
 
-    def __init__(self, renderer: TerminalRenderer, on_pause=None):
+    def __init__(self, renderer: TerminalRenderer, on_pause=None, stop_event=None):
         self.renderer = renderer
         self.first_frame = True
         self.lines: list[str] = []
         self.on_pause = on_pause
+        self.stop_event = stop_event
 
     def pause(self, paused: bool):
         if self.on_pause:
@@ -160,7 +233,10 @@ class CardTerminal:
         for row, line in enumerate(lines[:frame.rows]):
             frame.addstr(row, 0, line)
         if self.first_frame:
-            self.renderer.transition(frame)
+            if self.renderer.battle_transition_active:
+                self.renderer.complete_battle_transition(frame)
+            else:
+                self.renderer.transition(frame)
             self.first_frame = False
         else:
             self.renderer.present(frame)
@@ -179,6 +255,8 @@ class CardTerminal:
         screen = self.renderer.screen
         screen.timeout(50 if blocking else 0)
         while True:
+            if self.stop_event is not None and self.stop_event.is_set():
+                raise ConnectionError("Disconnected from server.")
             key = screen.getch()
             if key == curses.KEY_RESIZE:
                 self.render(self.lines)

@@ -182,13 +182,18 @@ class AdventureController:
             get_key()
             return
         options = [option.get("label", "Option") for option in event.get("options", [])]
-        index = self._select_option(event.get("title", node.label), event.get("text", ""), options)
-        if index is None:
-            return
-        selected = event.get("options", [])[index]
-        messages = self.data.apply_event_results(self.state, selected.get("results", []))
-        self.view.display_message(event.get("title", node.label), messages or ["Nothing changes."], self.state)
-        get_key()
+        while True:
+            index = self._select_option(event.get("title", node.label), event.get("text", ""), options, allow_escape=True)
+            if index is None:
+                return
+            selected = event.get("options", [])[index]
+            results = selected.get("results", [])
+            error = self.data.event_choice_error(self.state, results)
+            messages = [error] if error else self.data.apply_event_results(self.state, results)
+            self.view.display_message(event.get("title", node.label), messages or ["Nothing changes."], self.state)
+            get_key()
+            if not error:
+                return
 
     def _handle_shop(self):
         shop_pool = [card_id for card_id in self.state.shop_card_pool if card_id in self.data.cards]

@@ -1,6 +1,7 @@
 # src/keyboard.py
 # A simple, cross-platform module for single-key presses.
 import sys
+import os
 from contextlib import contextmanager
 from contextvars import ContextVar
 
@@ -68,22 +69,21 @@ except ImportError:
     import select
 
     def _read_unix_escape_sequence(fd) -> bytes:
-        if select.select([sys.stdin], [], [], 0.02) != ([sys.stdin], [], []):
+        if not select.select([fd], [], [], 0.02)[0]:
             return KEY_ESC
-        first = sys.stdin.read(1)
-        if first != '[':
+        first = os.read(fd, 1)
+        if first not in (b'[', b'O'):
             return KEY_ESC
-        if select.select([sys.stdin], [], [], 0.02) != ([sys.stdin], [], []):
-            return KEY_ESC
-        second = sys.stdin.read(1)
-        if second == 'A':
-            return KEY_UP
-        if second == 'B':
-            return KEY_DOWN
-        if second == 'C':
-            return KEY_RIGHT
-        if second == 'D':
-            return KEY_LEFT
+        # Read the tty descriptor directly. TextIO can prefetch the rest of an
+        # arrow sequence, leaving select() unable to see its buffered bytes.
+        for _ in range(16):
+            if not select.select([fd], [], [], 0.02)[0]:
+                return KEY_ESC
+            key = os.read(fd, 1)
+            if key in (b'A', b'B', b'C', b'D'):
+                return {b'A': KEY_UP, b'B': KEY_DOWN, b'C': KEY_RIGHT, b'D': KEY_LEFT}[key]
+            if key not in b'0123456789;':
+                break
         return KEY_ESC
     
     def _get_key():
@@ -92,12 +92,14 @@ except ImportError:
         old_settings = termios.tcgetattr(fd)
         try:
             tty.setraw(sys.stdin.fileno())
-            key = sys.stdin.read(1)
-            if key == '\x1b': # Arrow key prefix
+            key = os.read(fd, 1)
+            if not key:
+                raise EOFError("Terminal input closed.")
+            if key == b'\x1b': # Arrow key prefix
                 return _read_unix_escape_sequence(fd)
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        return _normalize_key(key.encode('utf-8'))
+        return _normalize_key(key)
 
     def _get_key_non_blocking():
         """Gets a single key press if one is available (non-blocking)."""
@@ -106,12 +108,13 @@ except ImportError:
         try:
             tty.setraw(sys.stdin.fileno())
             # Check if there is data to be read
-            if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
-                # This part is tricky for multi-byte arrow keys in non-blocking mode.
-                key = sys.stdin.read(1)
-                if key == '\x1b':
+            if select.select([fd], [], [], 0)[0]:
+                key = os.read(fd, 1)
+                if not key:
+                    raise EOFError("Terminal input closed.")
+                if key == b'\x1b':
                     return _read_unix_escape_sequence(fd)
-                return _normalize_key(key.encode('utf-8'))
+                return _normalize_key(key)
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
         return None

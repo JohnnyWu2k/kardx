@@ -16,6 +16,7 @@ TTX combines TTG-style multiplayer sandbox exploration with Kard-X's data-driven
 -   **Smooth Controls:** Local prediction responds before a server reply, with 60 Hz motion frames, quick braking, air steering, and forgiving jump timing.
 -   **Roaming Enemies:** Enemies patrol, pause and turn, spot players through clear lines of sight, briefly search their last seen position, and jump over small obstacles. The server updates the world even when players are idle.
 -   **Stable Terminal Rendering:** Unicode dot graphics move in quarter-tile increments at up to 60 frames per second. Only changed cells are sent to the terminal; menus and card battles share the same screen.
+-   **Pixel Art and Scene Changes:** Compressed PNG sprites provide trees and a textured grass path. Battle entry uses a diagonal, sparkling wipe while card data loads, then reveals the ready scene in reverse.
 -   **Real Pause:** Pausing freezes the player, including an airborne jump. The whole world freezes when all connected players are paused.
 -   **Data-Driven Design:** All cards and characters are defined in simple `.jsonc` files. Modifying the game or creating new content is as easy as editing a text file!
 -   **Strategic Depth:** Manage your Health (HP), Defense (DEF), and Mana to outwit your opponent. Grow stronger by permanently increasing your Max Mana.
@@ -65,6 +66,8 @@ For a persistent installation, use `uv tool install ttx`, then launch with `ttx`
 uv run pytest
 ```
 
+See [the project review](docs/project-review.md) for the bug fixes, regression coverage, and remaining architecture constraints.
+
 Manage dependencies and their lockfile with uv:
 
 ```bash
@@ -102,7 +105,7 @@ The manual **Publish to PyPI** GitHub Actions workflow also uses uv for dependen
 
 ## How to Play
 
-The `ttx` command opens a host/join menu.
+The `ttx` command opens a centered host/join menu. Click an option with the left mouse button, or use Up/Down (or `W`/`S`) and Enter. Settings uses the same controls, including after a window resize.
 
 - Host a game to start a local server and connect to it.
 - Join a game by entering the host IP address.
@@ -121,7 +124,11 @@ Windows supports independent held movement and jump keys, including release dete
 
 The terminal shows a Terraria-inspired side view with a camera that follows the player horizontally and vertically. A camera dead zone keeps small steps and short jumps from scrolling the whole map; a gradual entry into scrolling avoids a sudden camera start. Camera movement depends on player displacement and stops when the player stops, without continuing to drift. Dot graphics give each world tile a 4 by 4 dot area across two terminal columns and one row. The player and terrain share that projection, reducing movement increments to one quarter of a tile. Terminal graphics still have a finite grid; use `V` for the original text view if the terminal font does not display the dot characters well. The default world spans 512 by 192 tiles and loads terrain in chunks. The server shares the world dimensions and seed so clients with different terminal sizes see the same terrain. The right-side status panel keeps roughly one quarter of the terminal width across the supported window presets.
 
-Enemies normally roam around their spawn area. Within 12 tiles (Manhattan distance), they acquire the closest available player with an unobstructed view. Terrain and placed blocks block sight, including solid diagonal corners. They keep a visible target within 16 tiles; when sight is lost, they search the last seen position for about 800 ms before returning to patrol. They stop next to the player for `X` card combat; there is no automatic contact damage. During a card battle, the participating player and enemy stay fixed while the rest of the shared world continues running. Combat opens and closes with a short scene reveal, without leaving the curses screen or clearing the terminal history.
+Enemies normally roam around their spawn area. Within 12 tiles (Manhattan distance), they acquire the closest available player with an unobstructed view. Terrain and placed blocks block sight, including solid diagonal corners. They keep a visible target within 16 tiles; when sight is lost, they search the last seen position for about 800 ms before returning to patrol. They stop next to the player for `X` card combat; there is no automatic contact damage. During a card battle, the participating player and enemy stay fixed while the rest of the shared world continues running. The scene sweeps from the upper left to the lower right, flashes symbols while battle data is prepared, and sweeps back to reveal the completed frame. Returning to the world uses the same transition without clearing terminal history.
+
+Victory reward cards join your deck for later battles. Defeat returns you to exploration with at least 1 HP, following the legacy sandbox's nonlethal retreat rule.
+
+The default dot view draws [compressed tree and grass-path PNGs](src/ttx/assets) through the terminal canvas. The source prompts requested a single transparent, six-color woodland tree with a clear silhouette, and a horizontally repeating pixel-art grass-and-earth path with stones. [`tools/prepare_pixel_art.py`](tools/prepare_pixel_art.py) crops and quantizes the generated source images into the small runtime assets. Terminals with native image protocols can show higher-resolution graphics: [Kitty's graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) and [Windows Terminal's SIXEL support](https://github.com/microsoft/terminal/discussions/17809) are examples. The current in-game renderer uses Unicode dots for portability; a native image-protocol backend can be added later without changing the source PNGs or the battle loading transition.
 
 Terrain uses layered, smoothly interpolated value noise for elevation, biomes, caves, and mineral veins, plus winding underground tunnels. This follows common [noise-based terrain generation principles](https://www.redblobgames.com/maps/terrain-from-noise/); it is an original implementation inspired by Minecraft and Terraria rather than a copy of either game's generator.
 

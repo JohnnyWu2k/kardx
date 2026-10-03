@@ -14,6 +14,8 @@ class GameController:
         self.quit_to_menu_requested = False
 
     def run(self) -> str:
+        if not self.game.player or not self.game.enemy:
+            return "main_menu"
         self.game.start_battle()
         # Initial draw before the loop starts
         self.view.display_board(self.game.player, self.game.enemy, self.game.action_log)

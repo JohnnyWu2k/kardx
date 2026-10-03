@@ -5,11 +5,13 @@ import json
 import socket
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
-from ttx.combat.card_battle import run_card_battle
+from ttx.combat.card_battle import prepare_card_battle, run_card_battle
 from ttx.input import MotionInput, windows_key_state
 from ttx.terminal import CardTerminal, Frame, TerminalRenderer
 from ttx.net.prediction import LocalPrediction, RemoteInterpolation
+from ttx.net.protocol import SNAPSHOT_LIMIT, JsonLineReader, ProtocolError, valid_snapshot
 from ttx.world.camera import Camera
 from ttx.world.map import InfiniteGameMap
 from ttx.world.physics import position
@@ -34,14 +36,15 @@ def layout_columns(max_x: int) -> tuple[int, int, int]:
 
 
 def reset_client_state():
-    game_state.clear()
+    global game_state
+    game_state = {}
 
 
 def network_listener(sock: socket.socket, stop_event: threading.Event):
     global game_state
-    buffer = b""
+    reader = JsonLineReader(SNAPSHOT_LIMIT)
     try:
-        sock.settimeout(0.05)
+        sock.settimeout(0.2)
         while not stop_event.is_set():
             try:
                 data = sock.recv(4096)
@@ -49,13 +52,11 @@ def network_listener(sock: socket.socket, stop_event: threading.Event):
                 continue
             if not data:
                 break
-            buffer += data
-            while b"\n" in buffer:
-                line, buffer = buffer.split(b"\n", 1)
-                if line.strip():
-                    state = json.loads(line)
-                    state["received_at"] = time.monotonic()
-                    game_state = state
+            for state in reader.feed(data):
+                if not valid_snapshot(state):
+                    raise ProtocolError("Invalid world snapshot.")
+                state["received_at"] = time.monotonic()
+                game_state = state
     except (OSError, ValueError):
         pass
     finally:
@@ -81,6 +82,7 @@ class Game:
         self.card_hp: int | None = None
         self.card_max_hp: int | None = None
         self.card_base_mana: int | None = None
+        self._card_rewards_received = 0
         self._dirty = True
         self._last_render = 0.0
         self._renderer = renderer or TerminalRenderer(stdscr)
@@ -244,6 +246,7 @@ class Game:
 
     def _view_state(self, now: float) -> dict:
         packet = game_state
+        self._sync_card_rewards(packet)
         state = dict(packet)
         interpolation = getattr(self, "_remote_interpolation", None)
         if interpolation is None:
@@ -297,7 +300,7 @@ class Game:
             renderer.present(frame)
 
     def _draw_world(self):
-        max_y, max_x = self.stdscr.getmaxyx()
+        max_y, max_x = self.canvas.getmaxyx()
         game_width, panel_x, panel_width = layout_columns(max_x)
         camera_x, camera_y = self._camera_offset()
         smooth = getattr(self, "smooth_graphics", True)
@@ -444,49 +447,74 @@ class Game:
         target_enemy_id, enemy = self._adjacent_enemy()
         if not target_enemy_id or not enemy:
             return
-        self._stop_controls()
-        prediction = getattr(self, "_prediction", None)
-        if prediction:
-            deadline = time.monotonic() + 0.5
-            while int((self._server_player() or {}).get("input_seq", 0)) < prediction.sequence:
-                if time.monotonic() >= deadline:
-                    return
-                time.sleep(0.005)
-        self._send({"battle": "start", "enemy_id": target_enemy_id})
-        deadline = time.monotonic() + 1.0
-        while time.monotonic() < deadline:
-            if (self._my_player() or {}).get("battle_enemy") == target_enemy_id:
-                break
-            time.sleep(0.02)
-        else:
-            self._send({"battle": "end"})
-            return
+        self._sync_card_rewards()
         enemy_card_id = enemy.get("card_enemy_id", "enemy_giant_rat")
-        curses.flushinp()
-        try:
-            result = run_card_battle(
-                enemy_id=enemy_card_id,
-                player_id=self.card_player_id,
-                deck_ids=self.card_deck_ids,
-                hp=self.card_hp,
-                max_hp=self.card_max_hp,
-                base_mana=self.card_base_mana,
-                terminal=CardTerminal(self._terminal_renderer(), on_pause=self._request_pause),
-            )
-            self.card_hp = result.hp
-            self.card_max_hp = result.max_hp
-            self.card_base_mana = result.base_mana
-            self.card_deck_ids = result.deck_ids
-            if result.victory:
-                self._send({"attack": True, "enemy_id": target_enemy_id, "defeated": True})
-            self._notice = "Victory!" if result.victory else "Battle ended"
-            self._notice_until = time.monotonic() + 2.0
-        finally:
-            self._send({"battle": "end"})
-            self.stdscr.timeout(0)
-            self._motion_input().reset()
-            curses.flushinp()
-            self.render(transition=True)
+        renderer = self._terminal_renderer()
+        battle_requested = False
+        battle_started = False
+        with ThreadPoolExecutor(max_workers=1) as loader:
+            prepared = loader.submit(prepare_card_battle, enemy_card_id, self.card_player_id,
+                                     self.card_deck_ids, self.card_hp, self.card_max_hp,
+                                     self.card_base_mana)
+            self._stop_controls()
+            renderer.begin_battle_transition()
+            try:
+                prediction = getattr(self, "_prediction", None)
+                if prediction and not renderer.wait_battle_transition(
+                    lambda: int((self._server_player() or {}).get("input_seq", 0)) >= prediction.sequence, 0.5
+                ):
+                    return
+                self._send({"battle": "start", "enemy_id": target_enemy_id})
+                battle_requested = True
+                if not renderer.wait_battle_transition(
+                    lambda: (self._server_player() or {}).get("battle_enemy") == target_enemy_id, 1.0
+                ):
+                    return
+                battle_started = True
+                if not renderer.wait_battle_transition(
+                    lambda: prepared.done() or bool(self._stop_event and self._stop_event.is_set()), 5.0
+                ):
+                    raise ValueError("Battle data did not finish loading.")
+                if self._stop_event and self._stop_event.is_set():
+                    raise ConnectionError("Disconnected from server.")
+                game = prepared.result()
+                curses.flushinp()
+                result = run_card_battle(
+                    enemy_id=enemy_card_id,
+                    player_id=self.card_player_id,
+                    deck_ids=self.card_deck_ids,
+                    hp=self.card_hp,
+                    max_hp=self.card_max_hp,
+                    base_mana=self.card_base_mana,
+                    terminal=CardTerminal(renderer, on_pause=self._request_pause, stop_event=self._stop_event),
+                    prepared_game=game,
+                )
+                # Exploration has the same nonlethal retreat rule as Sandbox.
+                # Carrying zero HP would make every subsequent battle unusable.
+                self.card_hp = max(1, result.hp)
+                self.card_max_hp = result.max_hp
+                self.card_base_mana = result.base_mana
+                self.card_deck_ids = result.deck_ids
+                if result.victory:
+                    self._send({"attack": True, "enemy_id": target_enemy_id, "defeated": True})
+                self._notice = ("Victory!" if result.victory else
+                                "Defeated; survived with 1 HP" if result.hp <= 0 else "Battle ended")
+                self._notice_until = time.monotonic() + 2.0
+            except (OSError, ValueError, TypeError) as exc:
+                self._notice = f"Battle ended: {exc}"
+                self._notice_until = time.monotonic() + 3.0
+                if isinstance(exc, OSError):
+                    self.quit_to_menu = True
+            finally:
+                if battle_requested:
+                    self._send({"battle": "end"})
+                self.stdscr.timeout(0)
+                self._motion_input().reset()
+                curses.flushinp()
+                if not renderer.battle_transition_active and battle_started:
+                    renderer.begin_battle_transition()
+                if renderer.battle_transition_active:
+                    renderer.complete_battle_transition(self._compose_frame())
 
     def _send(self, message: dict):
         try:
@@ -494,15 +522,23 @@ class Game:
         except OSError:
             self.quit_to_menu = True
 
+    def _sync_card_rewards(self, packet=None):
+        if getattr(self, "card_deck_ids", None) is None:
+            return
+        rewards = (self._server_player(packet) or {}).get("cards", [])
+        received = getattr(self, "_card_rewards_received", 0)
+        self.card_deck_ids.extend(rewards[received:])
+        self._card_rewards_received = len(rewards)
+
     def _my_player(self) -> dict | None:
         players = self.state.get("players", {})
         client_id = self.state.get("client_id")
-        if client_id and client_id in players:
-            return players[client_id]
+        if client_id:
+            return players.get(client_id)
         return next(iter(players.values()), None) if players else None
 
     def _camera_offset(self) -> tuple[float, float]:
-        max_y, max_x = self.stdscr.getmaxyx()
+        max_y, max_x = self.canvas.getmaxyx()
         player = self._my_player()
         if not player:
             return 0, 0
@@ -653,6 +689,7 @@ class Game:
 def run_client(stdscr, server_host: str, server_port: int = PORT, renderer=None):
     reset_client_state()
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(5.0)
     try:
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     except OSError:
@@ -669,8 +706,8 @@ def run_client(stdscr, server_host: str, server_port: int = PORT, renderer=None)
         return "quit_to_menu"
     stop_event = threading.Event()
     listener = threading.Thread(target=network_listener, args=(sock, stop_event), daemon=False)
-    listener.start()
     try:
+        listener.start()
         game = Game(stdscr, sock, renderer=renderer, stop_event=stop_event)
         return game.run()
     finally:
@@ -683,8 +720,9 @@ def run_client(stdscr, server_host: str, server_port: int = PORT, renderer=None)
             sock.shutdown(socket.SHUT_RDWR)
         except OSError:
             pass
+        if listener.ident is not None:
+            listener.join()
         sock.close()
-        listener.join(timeout=1.0)
 
 
 def init_colors():

@@ -81,6 +81,12 @@ class AdventureData:
         deck_ids = self._apply_starting_card_limits(deck_ids, adv_def)
 
         map_rows = self._create_map_rows(adv_def)
+        if not map_rows or any(not row for row in map_rows):
+            raise ValueError("Adventure route must contain a nonempty row at every stage.")
+        for row in map_rows:
+            for node in row:
+                if node.type in {"Battle", "Elite", "Boss"} and node.enemy not in self.characters:
+                    raise ValueError(f"Adventure node '{node.id}' references missing enemy '{node.enemy}'.")
 
         return AdventureState(
             adventure_id=adventure_id,
@@ -250,7 +256,37 @@ class AdventureData:
                         messages.append(f"{self.relic_name(relic_id)} heals {healed} HP.")
         return messages
 
+    def event_choice_error(self, state: AdventureState, results: list[dict]) -> str | None:
+        # Preflight the whole choice so a reward before an unpaid cost cannot
+        # mutate the run. HP costs retain the existing nonlethal event rule.
+        gold, deck = state.gold, list(state.deck_ids)
+        for result in results:
+            action = result.get("action")
+            if action == "add_gold":
+                gold += int(result.get("value", 0))
+                if gold < 0:
+                    return "Not enough Gold for this choice."
+            elif action in {"remove_card", "upgrade_card"}:
+                card_id = result.get("from") if action == "upgrade_card" else result.get("card")
+                if card_id not in deck:
+                    return f"No {self.card_name(card_id)} available for this choice."
+                deck.remove(card_id)
+                if action == "upgrade_card":
+                    target = result.get("to")
+                    if target not in self.cards:
+                        return f"Unknown card: {target}."
+                    deck.append(target)
+            elif action == "add_card":
+                card_id = result.get("card")
+                if card_id not in self.cards:
+                    return f"Unknown card: {card_id}."
+                deck.append(card_id)
+        return None
+
     def apply_event_results(self, state: AdventureState, results: list[dict]) -> list[str]:
+        error = self.event_choice_error(state, results)
+        if error is not None:
+            return [error]
         messages = []
         for result in results:
             action = result.get("action")

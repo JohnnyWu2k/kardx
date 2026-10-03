@@ -11,18 +11,43 @@ REPEAT_LEASE = 0.18
 TAP_DURATION = 0.07
 
 
+def terminal_window(user32, kernel32):
+    """Find this console's visible owner, without guessing from foreground focus."""
+    kernel32.GetConsoleWindow.argtypes = []
+    kernel32.GetConsoleWindow.restype = ctypes.c_void_p
+    user32.GetAncestor.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+    user32.GetAncestor.restype = ctypes.c_void_p
+    user32.GetClassNameW.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_wchar), ctypes.c_int]
+    user32.GetClassNameW.restype = ctypes.c_int
+    console = kernel32.GetConsoleWindow()
+    if not console:
+        return None
+    window = user32.GetAncestor(console, 3)  # GA_ROOTOWNER follows parents and owners.
+    if not window:
+        return None
+    class_name = ctypes.create_unicode_buffer(256)
+    if not user32.GetClassNameW(window, class_name, len(class_name)):
+        return None
+    if class_name.value not in ("ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS"):
+        return None
+    return window
+
+
 def windows_key_state():
     if os.name != "nt" or not sys.stdin.isatty():
         return None
     try:
         user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         user32.GetForegroundWindow.restype = ctypes.c_void_p
         user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
         user32.GetAsyncKeyState.restype = ctypes.c_short
-        foreground = user32.GetForegroundWindow()
+        window = terminal_window(user32, kernel32)
+        if not window:
+            return None
 
         def focused():
-            return bool(foreground and user32.GetForegroundWindow() == foreground)
+            return user32.GetForegroundWindow() == window
 
         def sample():
             if not focused():

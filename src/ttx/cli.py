@@ -1,7 +1,10 @@
+import argparse
 import curses
 import sys
 import time
 
+from ttx import __version__
+from ttx.input import terminal_window
 from ttx.net.client import init_colors, run_client
 from ttx.net.server import PORT, start_server
 from ttx.terminal import TerminalRenderer
@@ -69,8 +72,8 @@ def _menu(stdscr, renderer, title: str, options: list[str], subtitle: str = "") 
 def main_menu(stdscr, renderer=None) -> str:
     curses.curs_set(0)
     renderer = renderer or TerminalRenderer(stdscr)
-    index = _menu(stdscr, renderer, "TTX", ["Host a game", "Join a game", "Settings", "Quit"],
-                  "Side-view sandbox RPG with Kardx card battles")
+    index = _menu(stdscr, renderer, "Kard-X Sandbox", ["Host a game", "Join a game", "Settings", "Quit"],
+                  "Side-view sandbox RPG with Kard-X card battles")
     return ["host", "join", "settings", "quit"][index]
 
 
@@ -109,16 +112,16 @@ def settings_menu(stdscr, renderer=None):
 
 
 def maximize_terminal(stdscr=None):
-    if sys.platform != "win32":
+    if sys.platform != "win32" or not sys.stdin.isatty():
         return
     try:
         import ctypes
-    except ImportError:
-        return
 
-    user32 = ctypes.windll.user32
-    user32.GetForegroundWindow.restype = ctypes.c_void_p
-    hwnd = user32.GetForegroundWindow()
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        hwnd = terminal_window(user32, kernel32)
+    except (ImportError, AttributeError, OSError):
+        return
     if not hwnd:
         return
 
@@ -168,11 +171,23 @@ def curses_main(stdscr):
                 server_handle.stop()
 
 
-def main():
-    maximize_terminal()
-    curses.wrapper(curses_main)
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="ttx", description="Play Kard-X Sandbox, a multiplayer terminal RPG."
+    )
+    parser.add_argument("--version", action="version", version=f"kard-x-sandbox {__version__}")
+    parser.parse_args(argv)
+    try:
+        maximize_terminal()
+        curses.wrapper(curses_main)
+    except KeyboardInterrupt:
+        return 130
+    except curses.error as exc:
+        print(f"Could not open the game terminal: {exc}", file=sys.stderr)
+        return 1
     print("Thanks for playing!")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

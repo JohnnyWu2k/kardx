@@ -3,9 +3,9 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+# Local working notes and Traditional Chinese drafts.
+/docs/
 .venv/
 .pytest_cache/
 .kardx/
 .uv-cache/
-.kardx/
-develope.md

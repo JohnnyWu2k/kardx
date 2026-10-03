@@ -1,4 +1,4 @@
-name: Publish to PyPI
+name: Prepare release
 
 on:
   workflow_dispatch:
@@ -7,12 +7,8 @@ permissions:
   contents: read
 
 jobs:
-  publish:
+  prepare:
     runs-on: ubuntu-latest
-    environment: pypi
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -20,13 +16,31 @@ jobs:
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.7"
+          python-version: "3.12"
       - name: Install dependencies
         run: uv sync --locked
       - name: Run tests
         run: uv run --locked pytest
       - name: Build distributions
-        run: uv build
+        run: uv build --no-sources --out-dir dist/release
+      - name: Check release contents and checksums
+        run: uv run --locked python tools/check_release.py dist/release --write-checksums
+      - name: Check PyPI metadata and README
+        run: uv run --isolated --no-project --python 3.12 --with twine twine check --strict dist/release/*.whl dist/release/*.tar.gz
       - name: Test installed wheel in isolation
-        run: uv run --isolated --no-project --with dist/*.whl --with 'pytest>=8,<10' pytest tests
-      - name: Publish
-        run: uv publish --trusted-publishing always
+        run: >-
+          uv run --isolated --no-project --python 3.10
+          --with dist/release/*.whl --with 'pytest>=8,<10'
+          python -c "import pathlib,sys,ttx,kardx,pytest;
+          source=(pathlib.Path.cwd()/'src').resolve();
+          assert all(not pathlib.Path(module.__file__).resolve().is_relative_to(source) for module in (ttx,kardx));
+          sys.exit(pytest.main(['tests','-q']))"
+      - name: Upload verified release artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kard-x-sandbox-release-${{ github.sha }}
+          path: |
+            dist/release/*.whl
+            dist/release/*.tar.gz
+            dist/release/SHA256SUMS
+          if-no-files-found: error

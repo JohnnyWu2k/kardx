@@ -3,9 +3,9 @@ requires = ["uv_build>=0.12.7,<0.13"]
 build-backend = "uv_build"
 
 [project]
-name = "ttx"
+name = "kard-x-sandbox"
 version = "0.1.0"
-description = "A multiplayer sandbox RPG with Kardx card battles."
+description = "A terminal sandbox RPG with multiplayer exploration and Kard-X card battles."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -13,12 +13,29 @@ license-files = ["LICENSE"]
 authors = [
   { name = "Johnny" }
 ]
+keywords = ["terminal", "game", "sandbox", "rpg", "cards", "multiplayer"]
+classifiers = [
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
+  "Topic :: Games/Entertainment :: Role-Playing",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.12",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+]
 dependencies = [
   "json5>=0.9",
   "pillow>=12.3.0",
   "wcwidth>=0.2",
   "windows-curses>=2.4; platform_system == 'Windows'",
 ]
+
+[project.urls]
+Homepage = "https://github.com/JohnnyWu2k/kardx"
+Source = "https://github.com/JohnnyWu2k/kardx"
+Issues = "https://github.com/JohnnyWu2k/kardx/issues"
+Changelog = "https://github.com/JohnnyWu2k/kardx/blob/main/CHANGELOG.md"
 
 [project.scripts]
 ttx = "ttx.cli:main"
@@ -33,7 +50,8 @@ required-version = ">=0.12.7"
 
 [tool.uv.build-backend]
 module-name = ["ttx", "kardx"]
-source-include = ["tests/**", "tools/**", "docs/**", "uv.lock", ".python-version", "src/main.py"]
+source-include = ["tests/**", "tools/**", "CHANGELOG.md", "RELEASING.md", "uv.lock", ".python-version", "src/main.py"]
+source-exclude = ["docs/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

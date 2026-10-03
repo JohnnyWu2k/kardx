@@ -1,13 +1,13 @@
 
-# TTX
+# Kard-X Sandbox
 
 
-A multiplayer sandbox RPG that uses Kard-X style card battles.
+A terminal sandbox RPG with multiplayer exploration and Kard-X card battles. Install the `kard-x-sandbox` package and launch it with `ttx`.
 
  
 
 
-TTX combines TTG-style multiplayer sandbox exploration with Kard-X's data-driven card battle system. The original Kard-X package is kept inside this repository as the card engine while new multiplayer sandbox systems live under the `ttx` package.
+Kard-X Sandbox combines TTG-style multiplayer sandbox exploration with Kard-X's data-driven card battle system. The original `kardx` Python package provides the card engine and legacy game modes; the `ttx` package provides the multiplayer world.
 
 ## Features
 
@@ -29,7 +29,22 @@ TTX combines TTG-style multiplayer sandbox exploration with Kard-X's data-driven
 
 ## Installation
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.12.7 or newer, then run these commands from the repository:
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.12.7 or newer. Once version 0.1.0 is published to PyPI, play without cloning this repository:
+
+```bash
+uvx --from kard-x-sandbox ttx
+```
+
+For a persistent installation:
+
+```bash
+uv tool install kard-x-sandbox
+ttx
+```
+
+Check the installed version with `ttx --version`; `ttx --help` shows command information without opening the game. The game needs an interactive terminal. Windows Terminal is recommended on Windows; Linux terminals need a working curses/terminfo installation. Python 3.10 and newer are supported.
+
+For development, clone the repository and run:
 
 ```bash
 uv sync
@@ -50,13 +65,14 @@ uv run sandkard
 
 `uv run` also installs the project and its dependencies automatically, so you can start with just `uv run ttx`. No virtual environment activation is needed. The project supports Python 3.10 or higher; uv uses Python 3.12 by default and downloads it if needed.
 
-Once this TTX package is published to PyPI, users can play without cloning the repository:
+The public package name is `kard-x-sandbox`, the main command is `ttx`, and the Python modules remain `ttx` and `kardx`.
+
+If this checkout was previously installed as the `ttx` distribution, rebuild its shared command launchers once after the rename:
 
 ```bash
-uvx ttx
+uv sync --locked --reinstall-package kard-x-sandbox
+uv run --locked ttx --version
 ```
-
-For a persistent installation, use `uv tool install ttx`, then launch with `ttx`.
 
 ## Development
 
@@ -66,7 +82,9 @@ For a persistent installation, use `uv tool install ttx`, then launch with `ttx`
 uv run pytest
 ```
 
-See [the project review](docs/project-review.md) for the bug fixes, regression coverage, and remaining architecture constraints.
+See the [changelog](https://github.com/JohnnyWu2k/kardx/blob/main/CHANGELOG.md) for release notes and the [release guide](https://github.com/JohnnyWu2k/kardx/blob/main/RELEASING.md) for distribution checks and publication steps.
+
+Public documentation, including this README, the changelog, and the release guide, is written in English. Personal reviews, development notes, and Traditional Chinese versions belong in the local `docs/` directory. That directory is ignored by Git and excluded from distribution archives.
 
 Manage dependencies and their lockfile with uv:
 
@@ -81,27 +99,28 @@ Commit `pyproject.toml`, `uv.lock`, and `.python-version` together. Use `uv sync
 
 ## Build and publish
 
-Build the source distribution and wheel into `dist/`:
+Build the source distribution and wheel into a dedicated release directory:
 
 ```bash
-uv build
+uv build --no-sources --out-dir dist/release
+uv run --locked python tools/check_release.py dist/release --write-checksums
 ```
 
-Before a subsequent release, update the version with `uv version --bump patch` (or `minor` / `major`), run the tests, and rebuild. To avoid uploading old releases from `dist/`, publish only the files for the intended version; for the current version:
+Before a subsequent release, update the version with `uv version --bump patch` (or `minor` / `major`), update the changelog, run the tests, and rebuild. Runtime version information comes from the installed package metadata. The maintainer performs the upload manually, using the exact two files for the intended release:
 
 ```bash
-uv publish dist/ttx-0.1.0.tar.gz dist/ttx-0.1.0-py3-none-any.whl
+uv publish dist/release/kard_x_sandbox-0.1.0.tar.gz dist/release/kard_x_sandbox-0.1.0-py3-none-any.whl
 ```
 
-Supply your PyPI API token through the `UV_PUBLISH_TOKEN` environment variable. If `dist/` contains only the intended release, the upload command is simply `uv publish`. You can check the files without uploading with `uv publish --dry-run`.
+Supply your PyPI API token through the `UV_PUBLISH_TOKEN` environment variable. Use explicit filenames because `dist/` may also contain older TTX builds. Add `--dry-run` to the command above to check the upload plan without publishing.
 
 For a trial upload, set `UV_PUBLISH_TOKEN` to a **TestPyPI** token and run:
 
 ```bash
-uv publish --index testpypi dist/ttx-0.1.0.tar.gz dist/ttx-0.1.0-py3-none-any.whl
+uv publish --index testpypi dist/release/kard_x_sandbox-0.1.0.tar.gz dist/release/kard_x_sandbox-0.1.0-py3-none-any.whl
 ```
 
-The manual **Publish to PyPI** GitHub Actions workflow also uses uv for dependency installation, tests, building, and publishing. To enable it, create a GitHub environment named `pypi` and configure a [PyPI Trusted Publisher](https://docs.pypi.org/trusted-publishers/) for this repository, workflow `publish.yml`, and environment `pypi`. Commit the release version and lockfile, then run the workflow on that commit from the Actions tab. It uses Trusted Publishing instead of a stored API token.
+The manual **Prepare release** GitHub Actions workflow validates the distributions and provides downloadable release artifacts. It does not upload to PyPI. See [RELEASING.md](https://github.com/JohnnyWu2k/kardx/blob/main/RELEASING.md) for the full verification and manual upload procedure.
 
 ## How to Play
 
@@ -128,7 +147,7 @@ Enemies normally roam around their spawn area. Within 12 tiles (Manhattan distan
 
 Victory reward cards join your deck for later battles. Defeat returns you to exploration with at least 1 HP, following the legacy sandbox's nonlethal retreat rule.
 
-The default dot view draws [compressed tree and grass-path PNGs](src/ttx/assets) through the terminal canvas. The source prompts requested a single transparent, six-color woodland tree with a clear silhouette, and a horizontally repeating pixel-art grass-and-earth path with stones. [`tools/prepare_pixel_art.py`](tools/prepare_pixel_art.py) crops and quantizes the generated source images into the small runtime assets. Terminals with native image protocols can show higher-resolution graphics: [Kitty's graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) and [Windows Terminal's SIXEL support](https://github.com/microsoft/terminal/discussions/17809) are examples. The current in-game renderer uses Unicode dots for portability; a native image-protocol backend can be added later without changing the source PNGs or the battle loading transition.
+The default dot view draws [compressed tree and grass-path PNGs](https://github.com/JohnnyWu2k/kardx/tree/main/src/ttx/assets) through the terminal canvas. The source prompts requested a single transparent, six-color woodland tree with a clear silhouette, and a horizontally repeating pixel-art grass-and-earth path with stones. [`tools/prepare_pixel_art.py`](https://github.com/JohnnyWu2k/kardx/blob/main/tools/prepare_pixel_art.py) crops and quantizes the generated source images into the small runtime assets. Terminals with native image protocols can show higher-resolution graphics: [Kitty's graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) and [Windows Terminal's SIXEL support](https://github.com/microsoft/terminal/discussions/17809) are examples. The current in-game renderer uses Unicode dots for portability; a native image-protocol backend can be added later without changing the source PNGs or the battle loading transition.
 
 Terrain uses layered, smoothly interpolated value noise for elevation, biomes, caves, and mineral veins, plus winding underground tunnels. This follows common [noise-based terrain generation principles](https://www.redblobgames.com/maps/terrain-from-noise/); it is an original implementation inspired by Minecraft and Terraria rather than a copy of either game's generator.
 
@@ -136,7 +155,7 @@ Editable card and character data is copied from the packaged defaults into your 
 
 ## Game Concept
 
-The main menu offers Sandbox Mode for free-form exploration, Adventure Mode for a full route-based run, and Quick Battle for the classic single fight. Each character begins with a unique starting deck.
+The legacy `kardx` command offers Sandbox Mode for room-based exploration, Adventure Mode for a full route-based run, and Quick Battle for the classic single fight. The primary `ttx` command opens the multiplayer host/join menu described above. Each character begins with a unique starting deck.
 
 -   **Objective:** Reduce the enemy's HP to zero.
 -   **Turns:** Each turn, you draw 5 cards and your Mana is refilled. Play cards by spending Mana.
@@ -161,9 +180,15 @@ The Content Editor can open the game's editable JSONC files:
 -   `recipes.jsonc` for material-based crafting that can add items, add cards, or upgrade cards.
 -   `encounters.jsonc` for room-triggered Sandbox Mode battles and victory rewards.
 
+## Current limits
+
+Multiplayer currently targets trusted local or LAN sessions on TCP port 12345. Card battle results are reported by the client; server-side turn verification is planned. A multiplayer world lasts for the running host session and does not yet have save/load support. Save slots belong to the legacy room-based Sandbox Mode.
+
+Windows is tested locally, and CI covers Linux and Windows on Python 3.10 and 3.12. Linux terminal interaction still needs a manual playthrough before claiming the same level of gameplay validation.
+
 ## Roadmap (Future Development)
 
-TTX is built to be expanded. Here's what's planned for the future:
+Kard-X Sandbox is built to be expanded. Here's what's planned for the future:
 
 -   [x] **Card Reward System:** Gain new cards after winning a battle.
 -   [x] **More Enemies & Bosses:** Introduce enemies with unique AI and abilities.
@@ -175,7 +200,7 @@ TTX is built to be expanded. Here's what's planned for the future:
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](https://github.com/JohnnyWu2k/kardx/blob/main/LICENSE) file for details.
 
 
 *Built with passion and Python.*

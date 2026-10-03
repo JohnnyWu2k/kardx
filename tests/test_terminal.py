@@ -5,9 +5,24 @@ from unittest.mock import Mock, patch
 
 from kardx import keyboard, view_utils
 from kardx.scenes.pause_menu.pause_menu_view import PauseMenuView
+from ttx.cli import maximize_terminal
 from ttx.combat.card_battle import GameController, run_card_battle
 from ttx.input import MotionInput, windows_key_state
 from ttx.terminal import CardTerminal, Frame, TerminalRenderer
+
+
+def window_api(class_name="CASCADIA_HOSTING_WINDOW_CLASS"):
+    api = Mock()
+    api.GetConsoleWindow.return_value = 7
+    api.GetAncestor.return_value = 42
+    api.GetForegroundWindow.return_value = 42
+
+    def copy_class(_window, buffer, _size):
+        buffer.value = class_name
+        return len(class_name)
+
+    api.GetClassNameW.side_effect = copy_class
+    return api
 
 
 class RecordingScreen:
@@ -94,8 +109,7 @@ class MotionInputTests(unittest.TestCase):
         self.assertEqual(controls.sample(1.45), (0, False))
 
     def test_windows_polling_uses_down_bit_and_stops_when_unfocused(self):
-        api = Mock()
-        api.GetForegroundWindow.return_value = 42
+        api = window_api()
         api.GetAsyncKeyState.side_effect = lambda key: 0x8000 if key in (0x44, 0x20) else 1
         with patch("ttx.input.os.name", "nt"), patch("ttx.input.sys.stdin") as stdin, patch(
             "ttx.input.ctypes.WinDLL", return_value=api, create=True
@@ -116,6 +130,60 @@ class MotionInputTests(unittest.TestCase):
             api.GetForegroundWindow.return_value = 42
             api.GetAsyncKeyState.side_effect = lambda key: 0
             self.assertEqual(controls.sample(1.02), (0, False))
+
+    def test_windows_polling_uses_own_console_when_another_window_is_initially_focused(self):
+        api = window_api()
+        api.GetForegroundWindow.return_value = 100
+        api.GetAsyncKeyState.return_value = 0x8000
+        with patch("ttx.input.os.name", "nt"), patch("ttx.input.sys.stdin") as stdin, patch(
+            "ttx.input.ctypes.WinDLL", return_value=api, create=True
+        ):
+            stdin.isatty.return_value = True
+            sample = windows_key_state()
+            self.assertEqual(sample(), (0, False))
+            api.GetAsyncKeyState.assert_not_called()
+            api.GetForegroundWindow.return_value = 42
+            self.assertTrue(sample()[1])
+
+    def test_unknown_console_host_uses_repeat_fallback(self):
+        api = window_api("PseudoConsoleWindow")
+        with patch("ttx.input.os.name", "nt"), patch("ttx.input.sys.stdin") as stdin, patch(
+            "ttx.input.ctypes.WinDLL", return_value=api, create=True
+        ):
+            stdin.isatty.return_value = True
+            self.assertIsNone(windows_key_state())
+            api.GetAsyncKeyState.assert_not_called()
+
+
+class WindowTests(unittest.TestCase):
+    def test_maximize_targets_own_terminal_instead_of_foreground_window(self):
+        for class_name in ("ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS"):
+            api = window_api(class_name)
+            api.GetForegroundWindow.return_value = 100
+            with self.subTest(host=class_name), patch("ttx.cli.sys.platform", "win32"), patch(
+                "ttx.cli.sys.stdin"
+            ) as stdin, patch("ttx.input.ctypes.WinDLL", return_value=api, create=True), patch(
+                "ttx.cli.time.sleep"
+            ), patch("ttx.cli.curses.update_lines_cols", create=True):
+                stdin.isatty.return_value = True
+                maximize_terminal()
+                api.ShowWindow.assert_called_once_with(42, 3)
+                api.GetForegroundWindow.assert_not_called()
+
+    def test_maximize_skips_unknown_absent_or_noninteractive_console(self):
+        for class_name, console, is_tty in (("PseudoConsoleWindow", 7, True),
+                                             ("ConsoleWindowClass", 0, True),
+                                             ("ConsoleWindowClass", 7, False)):
+            api = window_api(class_name)
+            api.GetConsoleWindow.return_value = console
+            with self.subTest(host=class_name, console=console, tty=is_tty), patch(
+                "ttx.cli.sys.platform", "win32"
+            ), patch("ttx.cli.sys.stdin") as stdin, patch(
+                "ttx.input.ctypes.WinDLL", return_value=api, create=True
+            ):
+                stdin.isatty.return_value = is_tty
+                maximize_terminal()
+                api.ShowWindow.assert_not_called()
 
 
 class TerminalTests(unittest.TestCase):

@@ -20,6 +20,9 @@ class Settings:
             "enable_menu_animations": True,
             "animation_speed_multiplier": 1.0,
             "color_theme": "default",
+            "battle_particle_color": "magenta",
+            "battle_particle_speed": 1.0,
+            "battle_transition_duration": 0.6,
         }
         packaged_defaults = load_packaged_json5_data("settings.jsonc")
         return self._validated(packaged_defaults, defaults) if isinstance(packaged_defaults, dict) else defaults
@@ -55,6 +58,14 @@ class Settings:
         data["animation_speed_multiplier"] = float(max(0.1, min(2.0, speed)))
         if data.get("color_theme") not in ("default", "ocean", "forest"):
             data["color_theme"] = defaults["color_theme"]
+        if data.get("battle_particle_color") not in ("magenta", "cyan", "blue", "green", "gold", "red", "white"):
+            data["battle_particle_color"] = "magenta"
+        for key, low, high, fallback in (("battle_particle_speed", 0.25, 4.0, 1.0),
+                                         ("battle_transition_duration", 0.0, 3.0, 0.6)):
+            value = data.get(key, fallback)
+            if type(value) not in (int, float) or not math.isfinite(value):
+                value = fallback
+            data[key] = max(low, min(high, float(value)))
         return data
 
     def _save_with_fallback(self):

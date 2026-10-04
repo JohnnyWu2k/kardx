@@ -6,12 +6,12 @@ from collections import deque
 from ...card import Card
 from ...player import Player
 from ...settings import settings_manager
-from ...view_utils import Colors, fit_to_width, get_visible_len, render_screen, terminal_size
+from ...view_utils import Colors, fit_to_width, get_visible_len, render_screen, terminal_size, set_mouse_targets
 
 
 class GameView:
     MIN_CARD_WIDTH = 14
-    MAX_CARD_WIDTH = 28
+    MAX_CARD_WIDTH = 32
     CARD_GAP = 2
 
     def _clip_text(self, text: str, width: int) -> str:
@@ -43,13 +43,14 @@ class GameView:
         title = self._clip_text(card.name, title_space)
         title_line = title + " " * max(1, inner_width - get_visible_len(title) - len(mana)) + mana
 
-        desc_height = max(1, card_height - 3)
+        art = self._card_art(card, inner_width, max(3, card_height - 6)) if card_height >= 7 else []
+        desc_height = max(0, card_height - 3 - len(art))
         wrapped = textwrap.wrap(card.description, width=max(8, inner_width))[:desc_height]
         while len(wrapped) < desc_height:
             wrapped.append("")
 
         lines = [top, f"| {self._pad_str(title_line, inner_width)} |"]
-        for desc in wrapped:
+        for desc in art + wrapped:
             lines.append(f"| {self._fit_line(desc, inner_width)} |")
         lines.append(bottom)
         return lines[:card_height]
@@ -72,16 +73,12 @@ class GameView:
         if not player.hand:
             return [self._fit_line("(Hand is empty)", width)]
         if max_lines < 5:
-            names = "  ".join(
-                (f"[{card.name}]" if i == selected_index else card.name)
-                for i, card in enumerate(player.hand)
-            )
-            if get_visible_len(names) > width and selected_index is not None and selected_index >= 0:
-                names = f"{selected_index + 1}/{len(player.hand)} [{player.hand[selected_index].name}]"
+            index = max(0, selected_index or 0)
+            names = f"{index + 1}/{len(player.hand)} [{player.hand[index].name}] (wheel to select)"
             return [self._fit_line(names, width)]
 
         columns, card_width = self._hand_layout(len(player.hand), width)
-        card_height = 8 if max_lines >= 8 else max(5, max_lines)
+        card_height = min(16, max_lines) if max_lines >= 8 else max(5, max_lines)
         rows: list[str] = []
         visible_rows = max(1, (max_lines + 1) // (card_height + 1))
         selected_row = max(0, selected_index or 0) // columns
@@ -95,7 +92,7 @@ class GameView:
             ]
             for line_index in range(card_height):
                 line = (" " * self.CARD_GAP).join(card[line_index] for card in rendered_cards)
-                rows.append(self._fit_line(line, width))
+                rows.append(self._fit_line(" " * max(0, (width - get_visible_len(line)) // 2) + line, width))
             if len(rows) >= max_lines:
                 break
             if start + columns < len(player.hand):
@@ -115,60 +112,144 @@ class GameView:
         wrapped = textwrap.wrap(raw, width=max(20, width - 4))
         return [self._fit_line("    " + line, width) for line in wrapped[:2]]
 
+    def _card_art(self, card, width=10, rows=3):
+        # Native terminal pixel art remains crisp at every font size.
+        text = (card.id + " " + card.name).lower()
+        kind = next((key for key in ("fire", "ice", "heal", "defend", "mana") if key in text), None)
+        if kind is None:
+            effects = {effect.get("action") for effect in card.effects}
+            healing = any(effect.get("action") == "add_hp" and effect.get("target") == "self"
+                          and effect.get("value", 0) > 0 for effect in card.effects)
+            kind = "heal" if healing else "defend" if "add_def" in effects else "mana" if effects & {"add_mana", "add_max_mana"} else "attack"
+        from ttx.art import card_pixels
+        return list(card_pixels(kind, width, rows))
+
+    def _portrait(self, actor, enemy=False):
+        name = actor.name.lower()
+        if "rat" in name:
+            pixels = ("     ▄▄ ▄▄  ", " ▄██████▄▀█ ", "▀▀  ▀█ ▀█   ")
+        elif "wolf" in name:
+            pixels = (" ▄       ▄▄ ", " ▀████████▀ ", "  ██  ██    ")
+        elif any(word in name for word in ("warden", "guardian", "automaton", "sentry")):
+            pixels = ("  ▄████▄  ", "██████████", "  ██  ██  ")
+        elif "leech" in name:
+            pixels = ("   ▄▄▄▄   ", " ▄██▀▀██▄ ", "  ▀████▀  ")
+        else:
+            pixels = ("  ▄██▄  ", "▄██████▄", " ██  ██ ")
+        color = Colors.negative if enemy else Colors.accent
+        return [color(row) for row in pixels]
+
+    def _vital_lines(self, actor, width):
+        now = time.monotonic()
+        if not hasattr(self, "_vitals"):
+            self._vitals = {}
+        values = (actor.hp, actor.mana, actor.defend)
+        previous, deltas, until = self._vitals.get(id(actor), (values, (0, 0, 0), 0))
+        if values != previous:
+            deltas = tuple(new - old for new, old in zip(values, previous))
+            until = now + 1.8
+        self._vitals[id(actor)] = values, deltas, until
+        def metric(label, value, maximum, index, color):
+            delta = deltas[index] if now < until else 0
+            suffix = f"  {delta:+d}" if delta else ""
+            bar_width = max(0, min(16, width - 25))
+            filled = round(bar_width * max(0, min(1, value / max(1, maximum))))
+            bar = " [" + "#" * filled + "-" * (bar_width - filled) + "]" if bar_width else ""
+            text = f"{label} {value}/{maximum}" + bar + suffix
+            return ("\033[1;7m" if delta else "\033[1m") + color(text) + "\033[0m"
+        return [metric("HP", actor.hp, actor.max_hp, 0, Colors.positive),
+                metric("MANA", actor.mana, actor.max_mana, 1, Colors.neutral) + f"  DEF {actor.defend}" +
+                (f" ({deltas[2]:+d})" if now < until and deltas[2] else "")]
+
+    def _fighter_panel(self, actor, label, width, animation_info, enemy=False):
+        def center(text):
+            return self._fit_line(" " * max(0, (width - get_visible_len(text)) // 2) + text, width)
+        lines = [center(label + "  " + actor.name)]
+        lines.extend(center(line) for line in self._vital_lines(actor, width))
+        lines.append("")
+        lines.extend(center(line) for line in self._portrait(actor, enemy))
+        event = animation_info.get("text", "") if animation_info and animation_info.get("target") is actor else ""
+        lines.append(center(event))
+        return [self._fit_line(line, width) for line in lines]
+
     def display_board(self, player: Player, enemy: Player, action_log: deque,
                       selected_index: int | None = None,
                       animation_info: dict | None = None,
                       enemy_card_played_index: int | None = None):
         width, height = terminal_size()
-        log_limit = 5 if height >= 28 else 3 if height >= 22 else 1
+        width, height = max(1, width), max(1, height)
+        targets = []
+        def centered(text):
+            return self._fit_line(" " * max(0, (width - get_visible_len(text)) // 2) + text, width)
+        def status(actor, label):
+            text = f"{label} {actor.name}  HP {actor.hp}/{actor.max_hp}  DEF {actor.defend}  Mana {actor.mana}/{actor.max_mana}"
+            if animation_info and actor == animation_info.get("target"):
+                text += " " + animation_info.get("text", "")
+            return centered(text)
 
-        enemy_line = f"ENEMY [ {enemy.name} ]"
-        if animation_info and enemy == animation_info.get('target'):
-            enemy_line += f"   {animation_info.get('text')}"
-
-        player_line = f"PLAYER [ {player.name} ]"
-        if animation_info and player == animation_info.get('target'):
-            player_line += f"   {animation_info.get('text')}"
-
-        top_lines = [
-            self._divider(width),
-            self._fit_line(enemy_line, width),
-            self._fit_line(
-                f"    HP: {enemy.hp}/{enemy.max_hp}  |  DEF: {enemy.defend}  |  Mana: {enemy.mana}/{enemy.max_mana}",
-                width,
-            ),
-            *self._format_enemy_hand(enemy, enemy_card_played_index, width),
-            self._divider(width),
-            "",
-            self._fit_line("--- Battle Log ---", width),
-        ]
-
-        visible_log = list(action_log)[-log_limit:]
-        if visible_log:
-            top_lines.extend(self._fit_line(f"> {message}", width) for message in visible_log)
+        lines = [centered("KARD-X  /  BATTLE")]
+        if width >= 90:
+            panel_width = min(64, (width - 10) // 2)
+            arena_width = panel_width * 2 + 6
+            inset = max(0, (width - arena_width) // 2)
+            lines.extend([""] * max(0, min(round(height * 0.10), height - 25)))
+            left_panel = self._fighter_panel(player, "PLAYER", panel_width, animation_info)
+            right_panel = self._fighter_panel(enemy, "ENEMY", panel_width, animation_info, True)
+            for left, right in zip(left_panel, right_panel):
+                lines.append(" " * inset + left + " " * 6 + right)
+            names = " ".join(f"[{card.name}]" if settings_manager.get("show_enemy_hand") else "[?]" for card in enemy.hand)
+            lines.append(" " * (inset + panel_width + 6) + self._fit_line(names, panel_width))
         else:
-            top_lines.append(self._fit_line("> Awaiting action...", width))
-
-        top_lines.extend([
-            self._divider(min(width, 30), "-"),
-            "",
-            self._fit_line("--- Your Hand (<-/-> select, Enter play, q discard, e end, Esc pause) ---", width),
-        ])
-
-        bottom_lines = [
-            self._divider(width),
-            self._fit_line(player_line, width),
-            self._fit_line(
-                f"    HP: {player.hp}/{player.max_hp}  |  Mana: {player.mana}/{player.max_mana}  |  DEF: {player.defend}",
-                width,
-            ),
-            self._fit_line(f"    Deck: {len(player.deck)} cards  |  Discard: {len(player.discard_pile)} cards", width),
-            self._divider(width),
-        ]
-
-        available_hand_lines = max(1, height - len(top_lines) - len(bottom_lines))
-        hand_lines = self._format_hand(player, selected_index, width, available_hand_lines)
-        render_screen(top_lines + hand_lines + bottom_lines)
+            # A compact vertical arena leaves at least seven rows for cards.
+            for actor, label in ((enemy, "ENEMY"), (player, "PLAYER")):
+                lines.append(centered(label + "  " + actor.name))
+                vitals = self._vital_lines(actor, max(10, width - 2))
+                lines.extend(centered(line) for line in vitals)
+        details = f"Deck {len(player.deck)} / Discard {len(player.discard_pile)} | Enemy cards {len(enemy.hand)}"
+        lines.append(centered(details))
+        if action_log:
+            lines.append(centered(str(action_log[-1])))
+        # Reserve the lower central area for the hand, even on a tall screen.
+        target_top = max(len(lines), min(round(height * 0.57), height - 10))
+        lines.extend([""] * max(0, target_top - len(lines)))
+        lines.append(centered("YOUR HAND / click select / wheel / arrows"))
+        hand_top = len(lines)
+        available = max(1, height - hand_top - 2)
+        hand_lines = self._format_hand(player, selected_index, width, available)
+        lines += hand_lines
+        if player.hand and selected_index is not None and selected_index >= 0:
+            card = player.hand[selected_index]
+            lines.append(centered(f"{card.name}: {card.description}"))
+        if player.hand:
+            columns, card_width = self._hand_layout(len(player.hand), width)
+            if available >= 5:
+                card_height = min(16, available) if available >= 8 else max(5, available)
+                visible_rows = max(1, (available + 1) // (card_height + 1))
+                first_row = max(0, max(0, selected_index or 0) // columns - visible_rows + 1)
+                for index in range(first_row * columns, len(player.hand)):
+                    row, col = divmod(index - first_row * columns, columns)
+                    row_count = min(columns, len(player.hand) - (first_row + row) * columns)
+                    row_width = row_count * card_width + (row_count - 1) * self.CARD_GAP
+                    top = hand_top + row * (card_height + 1)
+                    left = max(0, (width - row_width) // 2) + col * (card_width + self.CARD_GAP)
+                    if top >= hand_top + len(hand_lines):
+                        break
+                    targets.append((left, top, min(width, left + card_width), min(top + card_height, hand_top + len(hand_lines)), ("card", index)))
+            elif selected_index is not None and selected_index >= 0:
+                targets.append((0, hand_top, width, hand_top + 1, ("card", selected_index)))
+        buttons = [("[Play]", b'<ENTER>'), ("[Discard]", b'q'), ("[End turn]", b'e'), ("[Pause]", b'<ESC>')]
+        # Compact controls fit narrow terminals.
+        if width < 40:
+            buttons = [("[Play]", b'<ENTER>'), ("[End]", b'e'), ("[Pause]", b'<ESC>')]
+        footer = " ".join(label for label, _ in buttons)
+        top = min(height - 1, len(lines))
+        left = max(0, (width - len(footer)) // 2)
+        lines = lines[:top] + [centered(footer)]
+        for label, action in buttons:
+            targets.append((left, top, min(width, left + len(label)), top + 1, action))
+            left += len(label) + 1
+        render_screen(lines)
+        set_mouse_targets(targets)
 
     def _animation_steps(self, events: list[dict]) -> list[dict]:
         steps = []
@@ -233,6 +314,7 @@ class GameView:
         return selected_index
 
     def display_game_over(self, player: Player, enemy: Player):
+        set_mouse_targets([])
         lines = ["", "=" * 25]
         if player.hp <= 0:
             lines.append(Colors.negative("    YOU WERE DEFEATED"))

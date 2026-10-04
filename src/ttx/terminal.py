@@ -7,6 +7,7 @@ import re
 import time
 
 from wcwidth import wcwidth, wcswidth
+from kardx.settings import settings_manager
 
 SGR = re.compile(r"\033\[([0-9;]*)m")
 COLOR_PAIRS = {31: 5, 32: 2, 33: 7, 34: 8, 35: 9, 36: 4, 37: 3}
@@ -46,12 +47,14 @@ class Frame:
         if not 0 <= y < self.rows:
             return
         index = 0
+        foreground, background = 7, None
         while index < len(text):
             match = SGR.match(text, index)
             if match:
                 for code in (int(code or "0") for code in match.group(1).split(";")):
                     if code == 0:
                         attr = 0
+                        foreground, background = 7, None
                     elif code == 1:
                         attr |= curses.A_BOLD
                     elif code == 2:
@@ -64,9 +67,14 @@ class Frame:
                         attr &= ~curses.A_COLOR
                     elif 30 <= code <= 37 or 90 <= code <= 97:
                         base = code - 60 if code >= 90 else code
-                        attr = (attr & ~curses.A_COLOR) | curses.color_pair(COLOR_PAIRS.get(base, 3))
+                        foreground = base - 30
+                        pair = COLOR_PAIRS.get(base, 3) if background is None else 16 + foreground * 8 + background
+                        attr = (attr & ~curses.A_COLOR) | curses.color_pair(pair)
                         if code >= 90:
                             attr |= curses.A_BOLD
+                    elif 40 <= code <= 47:
+                        background = code - 40
+                        attr = (attr & ~curses.A_COLOR) | curses.color_pair(16 + foreground * 8 + background)
                 index = match.end()
                 continue
             char = text[index]
@@ -91,19 +99,52 @@ class TerminalRenderer:
         self.screen = screen
         self.last: Frame | None = None
         self._battle_source: Frame | None = None
+        self._force_redraw = False
+        # Finish a composed frame even while motion reports are arriving.
+        try:
+            curses.typeahead(-1)
+        except curses.error:
+            pass
+        if hasattr(screen, "leaveok"):
+            screen.leaveok(True)
+        if hasattr(screen, "scrollok"):
+            screen.scrollok(False)
 
     def frame(self) -> Frame:
         return Frame(*self.screen.getmaxyx())
+
+    def invalidate(self):
+        """Discard text-entry/IME residue in curses' physical-screen cache."""
+        self.last = None
+        self._force_redraw = True
 
     def present(self, frame: Frame) -> bool:
         previous = self.last
         if previous and previous.getmaxyx() != frame.getmaxyx():
             previous = None
+            self._force_redraw = True
+        if self._force_redraw:
+            if hasattr(self.screen, "erase"):
+                self.screen.erase()
+            if hasattr(self.screen, "clearok"):
+                self.screen.clearok(True)
+            previous = None
+            self._force_redraw = False
         changed = False
         for y, row in enumerate(frame.cells):
+            old_row = previous.cells[y] if previous else None
+            if old_row and row != old_row and any(char == "" for char, _ in old_row):
+                # PDCurses and terminal hosts can disagree on CJK cell width.
+                # Clear the entire old line, not just the tracked leading cell.
+                if hasattr(self.screen, "move") and hasattr(self.screen, "clrtoeol"):
+                    self.screen.move(y, 0)
+                    self.screen.clrtoeol()
+                if hasattr(self.screen, "redrawln"):
+                    self.screen.redrawln(y, 1)
+                old_row = None
             x = 0
             while x < frame.columns:
-                if previous and row[x] == previous.cells[y][x]:
+                if old_row and row[x] == old_row[x]:
                     x += 1
                     continue
                 start = x
@@ -112,8 +153,11 @@ class TerminalRenderer:
                     start = x - 1
                 attr = row[start][1]
                 x = max(x + 1, start + 1)
-                while x < frame.columns and row[x][1] == attr:
-                    if row[x][0] and previous and row[x] == previous.cells[y][x]:
+                wide = wcswidth(row[start][0]) == 2
+                if wide:
+                    x = start + 2
+                while not wide and x < frame.columns and row[x][1] == attr:
+                    if wcswidth(row[x][0]) == 2 or (row[x][0] and old_row and row[x] == old_row[x]):
                         break
                     x += 1
                 text = "".join(cell[0] for cell in row[start:x])
@@ -159,7 +203,8 @@ class TerminalRenderer:
         if progress <= 0:
             return frame
         width, height = max(1, frame.columns - 1), max(1, frame.rows - 1)
-        color = curses.color_pair(9)
+        pair = {"magenta": 9, "cyan": 4, "blue": 8, "green": 2, "gold": 7, "red": 5, "white": 3}
+        color = curses.color_pair(pair.get(settings_manager.get("battle_particle_color"), 9))
         for y in range(frame.rows):
             for x in range(frame.columns):
                 diagonal = (x / width + y / height) / 2
@@ -172,14 +217,16 @@ class TerminalRenderer:
                 frame.addch(y, x, symbol, attribute)
         return frame
 
-    def begin_battle_transition(self, duration: float = 0.24):
+    def begin_battle_transition(self, duration: float | None = None):
+        duration = settings_manager.get("battle_transition_duration", 0.6) / 2 if duration is None else duration
         source = self.last if self.last and self.last.getmaxyx() == self.screen.getmaxyx() else self.frame()
         self._battle_source = source.copy()
+        if duration <= 0:
+            return
         started = time.monotonic()
         for step in range(1, BATTLE_STEPS + 1):
             self.present(self._battle_veil(self._battle_source, step / BATTLE_STEPS, step))
-            if step < BATTLE_STEPS:
-                time.sleep(max(0, started + duration * step / BATTLE_STEPS - time.monotonic()))
+            time.sleep(max(0, started + duration * step / BATTLE_STEPS - time.monotonic()))
 
     def wait_battle_transition(self, ready, timeout: float | None = None) -> bool:
         """Keep the covered scene alive while data or images finish loading."""
@@ -191,22 +238,26 @@ class TerminalRenderer:
             source = self._battle_source
             if source is None:
                 return ready()
-            self.present(self._battle_veil(source, 1.0, pulse))
+            if settings_manager.get("battle_transition_duration", 0.6) > 0:
+                self.present(self._battle_veil(source, 1.0, pulse))
             pulse += 1
             time.sleep(min(0.05, max(0.0, deadline - time.monotonic())) if deadline is not None else 0.05)
         return True
 
-    def complete_battle_transition(self, target: Frame, duration: float = 0.24):
+    def complete_battle_transition(self, target: Frame, duration: float | None = None):
+        duration = settings_manager.get("battle_transition_duration", 0.6) / 2 if duration is None else duration
         source = self._battle_source
         self._battle_source = None
+        if duration <= 0:
+            self.present(target)
+            return
         if source is None or source.getmaxyx() != target.getmaxyx():
             self.transition(target)
             return
         started = time.monotonic()
         for step in range(1, BATTLE_STEPS + 1):
             self.present(self._battle_veil(target, 1 - step / BATTLE_STEPS, step))
-            if step < BATTLE_STEPS:
-                time.sleep(max(0, started + duration * step / BATTLE_STEPS - time.monotonic()))
+            time.sleep(max(0, started + duration * step / BATTLE_STEPS - time.monotonic()))
 
 
 class CardTerminal:
@@ -218,6 +269,7 @@ class CardTerminal:
         self.lines: list[str] = []
         self.on_pause = on_pause
         self.stop_event = stop_event
+        self.mouse_targets = []
 
     def pause(self, paused: bool):
         if self.on_pause:
@@ -259,7 +311,24 @@ class CardTerminal:
                 raise ConnectionError("Disconnected from server.")
             key = screen.getch()
             if key == curses.KEY_RESIZE:
+                self.mouse_targets = []
                 self.render(self.lines)
+                return b'<RESIZE>'
+            if key == curses.KEY_MOUSE:
+                from ttx.mouse import button, wheel
+                try:
+                    _, x, y, _, state = curses.getmouse()
+                except curses.error:
+                    continue
+                scroll = wheel(state)
+                if scroll:
+                    return keyboard.KEY_LEFT if scroll < 0 else keyboard.KEY_RIGHT
+                if button(state):
+                    for left, top, right, bottom, action in self.mouse_targets:
+                        if left <= x < right and top <= y < bottom:
+                            return action
+                if not blocking:
+                    return None
                 continue
             if key == -1:
                 if blocking:

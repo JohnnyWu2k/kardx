@@ -3,5 +3,8 @@
   "enable_colors": false,
   "enable_menu_animations": false,
   "animation_speed_multiplier": 1.0,
-  "color_theme": "default"
+  "color_theme": "default",
+  "battle_particle_color": "magenta",
+  "battle_particle_speed": 1.0,
+  "battle_transition_duration": 0.6
 }

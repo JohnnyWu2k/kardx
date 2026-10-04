@@ -149,10 +149,10 @@ class PixelArtTests(unittest.TestCase):
         with patch.object(curses, "color_pair", side_effect=lambda index: index * 256):
             load_sprite.cache_clear()
             tree, road = load_sprite("tree"), load_sprite("road")
-        self.assertEqual((tree.width, tree.height), (12, 24))
+        self.assertEqual((tree.width, tree.height), (24, 40))
         self.assertGreater(sum(visible for row in tree.pixels for visible, _ in row), 100)
         self.assertFalse(tree.pixels[0][0][0])
-        self.assertTrue(all(visible for visible, _ in tree.pixels[-1][5:7]))
+        self.assertTrue(all(visible for visible, _ in tree.pixels[-1][11:13]))
         self.assertTrue(any(not visible for row in road.pixels for visible, _ in row))
         self.assertTrue(any(attr == 3 * 256 | curses.A_BOLD for row in road.pixels for visible, attr in row if visible))
 
@@ -165,15 +165,14 @@ class PixelArtTests(unittest.TestCase):
 
         with patch.object(curses, "color_pair", side_effect=lambda index: index * 256):
             load_sprite.cache_clear()
-            canvas = DotCanvas(8, 12)
+            canvas = DotCanvas(12, 24)
             terrain(canvas, TinyMap(), (0, 0), {}, {'"': 0})
-            road_cells = [canvas.cells[2][x][0] for x in range(4, 8)]
-            self.assertTrue(any(mask != 255 for mask in road_cells))
-            mined = DotCanvas(8, 12)
+            self.assertTrue(all(color >= 0 for cell in canvas.pixels[4][8:16] for color in cell))
+            mined = DotCanvas(12, 24)
             terrain(mined, TinyMap(), (0, 0), {"2,2": {"char": "."}}, {'"': 0})
-            self.assertEqual([mined.cells[2][x][0] for x in range(4, 6)], [0, 0])
+            self.assertTrue(all(cell == (-1,) * 8 for row in mined.pixels[4:6] for cell in row[8:12]))
             tree_sprite(canvas, {"x": 4, "y": 5}, (0, 0), 0)
-            self.assertTrue(any(canvas.cells[y][x][0] for y in range(2, 6) for x in range(5, 11)))
+            self.assertTrue(any(canvas.cells[y][x][0] for y in range(2, 10) for x in range(12, 24)))
 
 
 if __name__ == "__main__":

@@ -60,7 +60,7 @@ class TTXTests(unittest.TestCase):
             self.assertEqual(game_map.get_tile(x, surface - 1), ".")
             self.assertIn(game_map.get_tile(x, surface), {'"', "%"})
             self.assertIn(game_map.get_tile(x, surface + 2), {":", "%"})
-            self.assertIn(game_map.get_tile(x, surface + 5), {"#", "o"})
+            self.assertIn(game_map.get_tile(x, surface + 5), {"#", "o", "c"})
         self.assertEqual(game_map.get_tile(5, 5), ".")
 
     def test_resource_spawns_are_sparse_and_clustered(self):

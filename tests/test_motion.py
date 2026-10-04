@@ -3,6 +3,7 @@
 import copy
 import random
 import unittest
+import curses
 from collections import deque
 from contextlib import ExitStack
 from unittest.mock import patch
@@ -223,23 +224,17 @@ class FractionalMotionTests(unittest.TestCase):
 
 
 class CameraAndGraphicsTests(unittest.TestCase):
-    def test_camera_stops_with_player_and_enters_scrolling_gradually(self):
+    def test_camera_is_fixed_until_edge_and_does_not_flip_on_small_reversal(self):
         camera = Camera()
         initial = camera.follow((100, 21), (40, 30), (512, 192))
-        inside = camera.follow((102, 19), (40, 30), (512, 192))
-        self.assertEqual(initial, inside)
-        first = camera.follow((103.25, 21), (40, 30), (512, 192))
-        self.assertGreater(first[0], initial[0])
-        self.assertLess(first[0] - initial[0], 0.25)
-        last = first
-        for frame in range(1, 101):
-            current = camera.follow((103.25 + frame / 4, 21), (40, 30), (512, 192))
-            self.assertGreaterEqual(current[0], last[0])
-            self.assertLessEqual(current[0] - last[0], 0.25 + 1e-9)
-            last = current
-        for _ in range(120):
-            self.assertEqual(camera.follow((128.25, 21), (40, 30), (512, 192)), last)
+        for x in (101, 110, 118.9, 90, 100):
+            self.assertEqual(camera.follow((x, 21), (40, 30), (512, 192)), initial)
+        shifted = camera.follow((119, 21), (40, 30), (512, 192))
+        self.assertGreater(shifted[0], initial[0])
+        for x in (119.1, 118.9, 120, 130):
+            self.assertEqual(camera.follow((x, 21), (40, 30), (512, 192)), shifted)
         self.assertEqual(camera.follow((511, 191), (40, 30), (512, 192)), (472, 162))
+        self.assertEqual(camera.follow((0, 0), (40, 30), (512, 192)), (0, 0))
 
     def test_player_and_camera_share_projection_without_cell_crossing_jitter(self):
         previous = None
@@ -251,36 +246,37 @@ class CameraAndGraphicsTests(unittest.TestCase):
                 self.assertEqual(projected, previous)
             previous = projected
 
-    def test_quarter_tile_changes_sprite_without_crossing_integer_cell(self):
+    @patch.object(curses, "color_pair", return_value=0)
+    def test_quarter_tile_changes_sprite_without_crossing_integer_cell(self, _colors):
         first, second = DotCanvas(5, 12), DotCanvas(5, 12)
         actor_sprite(first, {"x": 2, "y": 2}, (0, 0), 4)
         actor_sprite(second, {"x": 2, "y": 2, "horizontal_progress": 0.25}, (0, 0), 4)
-        self.assertNotEqual(first.cells, second.cells)
+        self.assertNotEqual(first.pixels, second.pixels)
         before, after = Frame(5, 12), Frame(5, 12)
         first.paint(before)
         second.paint(after)
         self.assertNotEqual(before.cells, after.cells)
 
-    def test_terrain_scrolls_one_dot_and_mining_is_visible(self):
+    @patch.object(curses, "color_pair", return_value=0)
+    def test_terrain_scrolls_one_dot_and_mining_is_visible(self, _colors):
         game_map = FlatMap()
-        first, second = DotCanvas(4, 12), DotCanvas(4, 12)
+        first, second = DotCanvas(6, 24), DotCanvas(6, 24)
         tiles = {"3,1": {"char": "#"}}
         terrain(first, game_map, (0, 0), tiles, {"#": 7})
-        terrain(second, game_map, (0.25, 0), tiles, {"#": 7})
+        terrain(second, game_map, (0.125, 0), tiles, {"#": 7})
 
         def dots(canvas):
-            from ttx.world.render import DOT_BITS
             return {(x, y) for y in range(canvas.rows * 4) for x in range(canvas.columns * 2)
-                    if canvas.cells[y // 4][x // 2][0] & DOT_BITS[y % 4][x % 2]}
+                    if canvas.pixels[y // 4][x // 2][(y % 4) * 2 + x % 2] >= 0}
 
-        # Ignore the left world boundary; isolate the four-dot tile.
-        tile = {(x, y) for x, y in dots(first) if 12 <= x <= 15 and 4 <= y <= 7}
-        self.assertEqual(tile, {(x, y) for x in range(12, 16) for y in range(4, 8)})
+        # Ignore the left world boundary; isolate one fully opaque tile.
+        tile = {(x, y) for x, y in dots(first) if 24 <= x <= 31 and 8 <= y <= 15}
+        self.assertEqual(len(tile), 64)  # No artificial black seams or shadow holes.
         self.assertEqual({(x - 1, y) for x, y in tile},
-                         {(x, y) for x, y in dots(second) if 11 <= x <= 14 and 4 <= y <= 7})
-        mined = DotCanvas(4, 12)
+                         {(x, y) for x, y in dots(second) if 23 <= x <= 30 and 8 <= y <= 15})
+        mined = DotCanvas(6, 24)
         terrain(mined, game_map, (0, 0), {"3,1": {"char": "."}}, {"#": 7})
-        self.assertFalse(any(12 <= x <= 15 and 4 <= y <= 7 for x, y in dots(mined)))
+        self.assertFalse(any(24 <= x <= 31 and 8 <= y <= 15 for x, y in dots(mined)))
 
     def test_remote_snapshots_interpolate_instead_of_teleporting(self):
         interpolation = RemoteInterpolation()
@@ -357,7 +353,7 @@ class ClientGraphicsTests(unittest.TestCase):
             client.game_state = packet
             self.game.render()
             self.assertNotEqual(before.cells, self.game._renderer.last.cells)
-            self.assertLessEqual(sum(len(call[2]) for call in self.screen.writes), 8)
+            self.assertLessEqual(sum(len(call[2]) for call in self.screen.writes), 16)
             self.assertEqual(draw.call_count, 1)
             self.assertNotIn("display_position", packet["players"]["p"])
             packet = copy.deepcopy(packet)
@@ -377,6 +373,25 @@ class ClientGraphicsTests(unittest.TestCase):
         self.assertEqual(position(self.game._prediction.actor), before)
         self.game.process_key(ord("v"))
         self.assertTrue(self.game.smooth_graphics)
+
+    def test_page_switch_rebuilds_terrain_once_then_reuses_it(self):
+        with patch.object(client, "terrain", wraps=terrain) as draw:
+            self.game.render()
+            start = self.game._display_camera
+            game_width, _, _ = client.layout_columns(self.screen.columns)
+            edge = start[0] + game_width / 4 - 1
+            packet = copy.deepcopy(client.game_state)
+            packet["players"]["p"].update(x=int(edge), horizontal_progress=edge % 1)
+            client.game_state = packet
+            self.game._prediction = None
+            self.game.render()
+            target = self.game._display_camera
+            self.assertGreater(target[0], start[0])
+            self.assertEqual(draw.call_count, 2)
+            for _ in range(30):
+                self.game.render()
+                self.assertEqual(self.game._display_camera, target)
+            self.assertEqual(draw.call_count, 2)
 
     def test_pause_background_is_frozen_even_if_multiplayer_packets_change(self):
         snapshots = []

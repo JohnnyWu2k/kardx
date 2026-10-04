@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.0 — persistent worlds, inventory and terminal graphics
+
+- Create and load named worlds, including Unicode names. Save terrain changes, world objects, enemies, player inventories, hotbar order and card progression with atomic writes, periodic autosaves and a Save option in Pause.
+- Discover hosted worlds on the local network or connect by entering the host address.
+- Add crafting, workbenches and pickaxe progression, with material ownership, selected tools, harvesting tiers and placement reach validated by the server.
+- Replace the fixed five-item inventory and duplicate material summary with a ten-slot hotbar and a centered 25-slot backpack opened with `E`. Empty slots show only their numbers; hover, click, arrow keys and slot shortcuts support selection and arrangement.
+- Make the selected item determine the left-button action: blocks place, tools and empty hands gather. Hold the button to repeat every 120 ms at the current pointer target; release, slot changes and menus cancel the action. Right-click hides the reticle, and depleted block stacks never switch to digging during a hold.
+- Package eight terrain textures and fantasy card artwork. Draw opaque terrain without dotted shadows or dark tile seams, and add directional walking, jumping, falling and landing poses.
+- Switch directly to the next viewport at all four edges, with overlap to prevent repeated page changes. Reuse cached terrain between switches and update only changed terminal cells.
+- Improve mouse support across world, crafting, inventory, menus and card battles; add configurable battle transition duration and particle colors.
+- Fix Unicode world-name input and wide-character redraws that left text in loading screens or the world. Improve Windows Terminal input ownership, free mouse movement reports and held-button release detection.
+
+Multiplayer battle results and player identity remain client-reported; this release targets trusted local/LAN play. Worlds are saved on the host. A manual Linux terminal playthrough remains outstanding.
+
 ## 0.1.0 — first public release
 
 Published package: `kard-x-sandbox`. Main command: `ttx`.

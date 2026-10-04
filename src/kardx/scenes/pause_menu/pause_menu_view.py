@@ -1,5 +1,5 @@
 # src/scenes/pause_menu/pause_menu_view.py
-from ...view_utils import Colors, get_visible_len, render_overlay
+from ...view_utils import Colors, get_visible_len, render_overlay, set_mouse_targets
 
 class PauseMenuView:
     """Displays a large, immersive pause menu panel."""
@@ -54,3 +54,5 @@ class PauseMenuView:
         panel.append("└" + "─" * (box_width - 2) + "┘")
         
         render_overlay(panel, start_col, start_row)
+        set_mouse_targets([(start_col, start_row + 4 + i * 2, start_col + box_width,
+                            start_row + 5 + i * 2, ("pause", i)) for i in range(len(options))])

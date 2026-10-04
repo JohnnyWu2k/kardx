@@ -10,7 +10,11 @@ from PIL import Image
 
 
 def _shade(red: int, green: int, blue: int) -> int:
-    if green > red * 1.05:
+    if max(red, green, blue) - min(red, green, blue) < 40:
+        return curses.color_pair(3) | (curses.A_DIM if red < 140 else 0)
+    if blue > red * 1.3 and blue > green * 1.2:
+        return curses.color_pair(8)
+    if green > red * 1.05 and green > blue * 1.1:
         return curses.color_pair(2) | (curses.A_BOLD if green >= 150 else 0)
     if red >= 200 and green >= 160:
         return curses.color_pair(3) | curses.A_BOLD
@@ -22,7 +26,8 @@ def _shade(red: int, green: int, blue: int) -> int:
 class PixelSprite:
     def __init__(self, image: Image.Image, width: int, height: int, textured: bool = False):
         source = image.convert("RGBA")
-        sample = source.resize((width, height), Image.Resampling.BOX)
+        sample = source.resize((width, height), Image.Resampling.NEAREST)
+        coverage = source.getchannel("A").resize((width, height), Image.Resampling.BOX)
         self.width, self.height = width, height
         self.pixels = []
         flat = iter(sample.get_flattened_data())
@@ -30,7 +35,7 @@ class PixelSprite:
             row = []
             for x in range(width):
                 red, green, blue, alpha = next(flat)
-                visible = alpha >= 112
+                visible = coverage.getpixel((x, y)) >= 112
                 if textured:
                     # Bright stones and dark cracks disappear under ordinary
                     # averaging at only four dots per world tile. Preserve
@@ -49,19 +54,32 @@ class PixelSprite:
         self.pixels = tuple(self.pixels)
 
     def blit(self, canvas, left: int, top: int, priority: int = 1,
-             source_x: int = 0, width: int | None = None):
+             source_x: int = 0, width: int | None = None, source_y: int = 0, height: int | None = None):
         width = self.width - source_x if width is None else width
-        for y, row in enumerate(self.pixels):
+        height = self.height - source_y if height is None else height
+        for y, row in enumerate(self.pixels[source_y:source_y + height]):
             for x in range(width):
                 visible, attr = row[source_x + x]
                 if visible:
                     canvas.dot(left + x, top + y, attr, priority=priority)
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=4)
 def load_sprite(name: str) -> PixelSprite:
+    if name in ("dirt", "stone"):
+        from ttx.art import atlas_region
+        sprite = PixelSprite(atlas_region(name), 16, 16)
+        # Preserve contrasting grain even on monochrome terminals. The mask
+        # is anchored in world space, so its pattern never changes per frame.
+        image = atlas_region(name).resize((16, 16), Image.Resampling.NEAREST).convert("L")
+        values = sorted(image.get_flattened_data())
+        threshold = values[len(values) // 4]
+        sprite.pixels = tuple(tuple((image.getpixel((x, y)) > threshold, attr)
+                                   for x, (_, attr) in enumerate(row))
+                              for y, row in enumerate(sprite.pixels))
+        return sprite
     if name == "tree":
-        filename, width, height, textured = "woodland_tree.png", 12, 24, False
+        filename, width, height, textured = "woodland_tree.png", 24, 40, False
     elif name == "road":
         filename, width, height, textured = "grass_road.png", 8, 4, True
     else:

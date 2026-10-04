@@ -11,6 +11,63 @@ REPEAT_LEASE = 0.18
 TAP_DURATION = 0.07
 
 
+def pseudoconsole_window(user32, kernel32):
+    """Resolve a unique Windows Terminal window from our process ancestry.
+
+    GetConsoleWindow can refer to an invisible pseudoconsole message window.
+    Toolhelp API: https://learn.microsoft.com/en-us/windows/win32/toolhelp/taking-a-snapshot-and-viewing-processes
+    """
+    if not os.environ.get("WT_SESSION"):
+        return None
+    from ctypes import wintypes
+    class ProcessEntry(ctypes.Structure):
+        _fields_ = [("size", wintypes.DWORD), ("usage", wintypes.DWORD), ("pid", wintypes.DWORD),
+                    ("heap", ctypes.c_size_t), ("module", wintypes.DWORD), ("threads", wintypes.DWORD),
+                    ("parent", wintypes.DWORD), ("priority", wintypes.LONG), ("flags", wintypes.DWORD),
+                    ("exe", wintypes.WCHAR * 260)]
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    for method in (kernel32.Process32FirstW, kernel32.Process32NextW):
+        method.argtypes = [wintypes.HANDLE, ctypes.POINTER(ProcessEntry)]
+        method.restype = wintypes.BOOL
+    snapshot = kernel32.CreateToolhelp32Snapshot(2, 0)
+    if snapshot in (None, ctypes.c_void_p(-1).value):
+        return None
+    parents = {}
+    try:
+        entry = ProcessEntry()
+        entry.size = ctypes.sizeof(entry)
+        valid = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while valid:
+            if entry.pid in parents:
+                break
+            parents[entry.pid] = entry.parent
+            valid = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
+    ancestry = set()
+    pid = os.getpid()
+    while pid and pid not in ancestry:
+        ancestry.add(pid)
+        pid = parents.get(pid, 0)
+    callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
+    matches = []
+    def visit(window, _):
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(window, ctypes.byref(pid))
+        name = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(window, name, 256)
+        if pid.value in ancestry and user32.IsWindowVisible(window) and name.value == "CASCADIA_HOSTING_WINDOW_CLASS":
+            matches.append(window)
+        return True
+    user32.EnumWindows(callback_type(visit), 0)
+    return matches[0] if len(matches) == 1 else None
+
+
 def terminal_window(user32, kernel32):
     """Find this console's visible owner, without guessing from foreground focus."""
     kernel32.GetConsoleWindow.argtypes = []
@@ -42,7 +99,7 @@ def windows_key_state():
         user32.GetForegroundWindow.restype = ctypes.c_void_p
         user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
         user32.GetAsyncKeyState.restype = ctypes.c_short
-        window = terminal_window(user32, kernel32)
+        window = terminal_window(user32, kernel32) or pseudoconsole_window(user32, kernel32)
         if not window:
             return None
 
@@ -60,6 +117,9 @@ def windows_key_state():
             return int(right) - int(left), down(0x57) or down(0x26) or down(0x20)
 
         sample.focused = focused
+        # Also catches a release outside the terminal, where curses may not
+        # receive BUTTON1_RELEASED. Never starts an action without a mouse event.
+        sample.mouse_down = lambda: focused() and bool(user32.GetAsyncKeyState(0x01) & 0x8000)
         sample.movement_down = False
         return sample
     except (AttributeError, OSError):

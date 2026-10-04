@@ -37,7 +37,8 @@ class PackagingTests(unittest.TestCase):
 
     def test_pixel_art_assets_are_packaged(self):
         assets = files("ttx").joinpath("assets")
-        for name in ("woodland_tree.png", "grass_road.png"):
+        for name in ("woodland_tree.png", "grass_road.png", "fantasy_atlas.png", "terrain_atlas.png",
+                     "terrain_tiles.png", "terrain_prompt.txt"):
             with self.subTest(asset=name):
                 resource = assets.joinpath(name)
                 self.assertTrue(resource.is_file())

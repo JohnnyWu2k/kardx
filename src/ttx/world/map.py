@@ -11,7 +11,7 @@ except ModuleNotFoundError:
 
 class InfiniteGameMap:
     AIR = "."
-    SOLID_TILES = frozenset({'"', ":", "#", "%", "o", "*", "|"})
+    SOLID_TILES = frozenset({'"', ":", "#", "%", "o", "*", "|", "c", "l", "W"})
 
     def __init__(self, width: int, chunk_height: int = 20, seed: int | None = None,
                  height: int = 192, chunk_width: int = 32):
@@ -73,8 +73,12 @@ class InfiniteGameMap:
         vein = self._noise(x / 5, y / 4, 30)
         if depth > 24 and vein > 0.79:
             return "*"
-        if vein > 0.69:
+        if depth > 16 and self._noise(x / 4, y / 3, 32) > 0.72:
+            return "l"
+        if depth > 7 and vein > 0.69:
             return "o"
+        if self._noise(x / 5, y / 4, 31) > 0.65:
+            return "c"
         return "#"
 
     def generate_chunk(self, chunk_index: int, chunk_x: int = 0) -> list[list[str]]:
@@ -127,5 +131,5 @@ class InfiniteGameMap:
     def _tile_attr(self, tile: str) -> int:
         if curses is None:
             return 0
-        pair = {'"': 2, ":": 6, "#": 3, "%": 7, "o": 7, "*": 4, "|": 6}.get(tile)
+        pair = {'"': 2, ":": 6, "#": 3, "%": 7, "o": 7, "*": 4, "|": 6, "c": 10, "l": 8, "W": 6}.get(tile)
         return curses.color_pair(pair) if pair else curses.A_NORMAL

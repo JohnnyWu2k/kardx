@@ -2,6 +2,7 @@
 
 import json
 import math
+from ttx.world.inventory import valid_order
 
 COMMAND_LIMIT = 64 * 1024
 SNAPSHOT_LIMIT = 16 * 1024 * 1024
@@ -47,8 +48,26 @@ def valid_command(message) -> bool:
     """Reject malformed fields before a handler can partially mutate the world."""
     if not isinstance(message, dict):
         return False
-    for key in ("pause", "build", "attack", "gather", "jump", "stop", "disconnect", "defeated"):
+    if "inventory_order" in message and not valid_order(message["inventory_order"]):
+        return False
+    if "tool" in message and message["tool"] is not None and message["tool"] not in ("wood_pickaxe", "stone_pickaxe", "iron_pickaxe"):
+        return False
+    for key in ("pause", "build", "attack", "gather", "jump", "stop", "disconnect", "defeated", "save"):
         if key in message and type(message[key]) is not bool:
+            return False
+    if "hello" in message and (not isinstance(message["hello"], str) or len(message["hello"]) != 32 or any(c not in "0123456789abcdef" for c in message["hello"])):
+        return False
+    if "craft" in message and (not isinstance(message["craft"], str) or len(message["craft"]) > 40):
+        return False
+    if "card_progress" in message:
+        progress = message["card_progress"]
+        if not isinstance(progress, dict) or set(progress) != {"hp", "max_hp", "mana", "deck", "rewards_received"}:
+            return False
+        if any(type(progress[k]) is not int or not 1 <= progress[k] <= 100000 for k in ("hp", "max_hp", "mana")):
+            return False
+        if type(progress["rewards_received"]) is not int or not 0 <= progress["rewards_received"] <= 100000:
+            return False
+        if not isinstance(progress["deck"], list) or len(progress["deck"]) > 5000 or any(not isinstance(card, str) or len(card) > 100 for card in progress["deck"]):
             return False
     for key in ("move", "dx", "dy"):
         if key in message and (type(message[key]) is not int or message[key] not in (-1, 0, 1)):
@@ -103,9 +122,11 @@ def valid_snapshot(state: dict) -> bool:
             for key in ("paused", "pause_requested"):
                 if key in actor and type(actor[key]) is not bool:
                     return False
-            if group == "custom_tiles" and actor.get("char") not in ('.', '"', ':', '#', '%', 'o', '*', '|'):
+            if group == "custom_tiles" and actor.get("char") not in ('.', '"', ':', '#', '%', 'o', '*', '|', 'c', 'l', 'W'):
                 return False
             if group == "players":
+                if "inventory_order" in actor and not valid_order(actor["inventory_order"]):
+                    return False
                 inventory = actor.get("inventory", {})
                 if not isinstance(inventory, dict) or any(type(amount) is not int or amount < 0 for amount in inventory.values()):
                     return False

@@ -55,7 +55,13 @@ class GameController:
             # Default to no redraw
             needs_redraw = False
 
-            if key == KEY_LEFT:
+            if isinstance(key, tuple) and key[0] == "card":
+                if 0 <= key[1] < len(self.game.player.hand):
+                    self.selected_card_index = key[1]
+                    needs_redraw = True
+            elif key == b'<RESIZE>':
+                needs_redraw = True
+            elif key == KEY_LEFT:
                 if self.selected_card_index > 0: 
                     self.selected_card_index -= 1
                     needs_redraw = True
@@ -66,6 +72,7 @@ class GameController:
             elif key == KEY_ENTER:
                 if self.selected_card_index != -1:
                     status, events = self.game.play_card(self.selected_card_index)
+                    needs_redraw = True  # Failed plays also have a useful log message.
                     if status == "success":
                         if not self.game.player.hand: self.selected_card_index = -1
                         else: self.selected_card_index = min(self.selected_card_index, len(self.game.player.hand) - 1)
@@ -118,6 +125,8 @@ class GameController:
 
     def _handle_animation_input(self, selected_index: int | None) -> int | None:
         key = get_key_non_blocking()
+        if isinstance(key, tuple) and key[0] == "card":
+            return key[1] if 0 <= key[1] < len(self.game.player.hand) else selected_index
         if key == KEY_ESC:
             self._run_pause_menu()
             return selected_index

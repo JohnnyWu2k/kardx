@@ -117,12 +117,15 @@ class MotionInputTests(unittest.TestCase):
             stdin.isatty.return_value = True
             sample = windows_key_state()
             self.assertEqual(sample(), (1, True))
-            api.GetAsyncKeyState.side_effect = lambda key: 0x8000 if key in (0x41, 0x44) else 0
+            self.assertFalse(sample.mouse_down())  # Low bit is not a held button.
+            api.GetAsyncKeyState.side_effect = lambda key: 0x8000 if key in (0x01, 0x41, 0x44) else 0
+            self.assertTrue(sample.mouse_down())
             controls = MotionInput(sample)
             controls.feed("d", 1.0)
             self.assertEqual(controls.sample(1.01), (0, False))
             api.GetForegroundWindow.return_value = 100
             self.assertEqual(sample(), (0, False))
+            self.assertFalse(sample.mouse_down())
             controls = MotionInput(sample)
             controls.feed("d", 1.0)
             controls.feed("w", 1.0)

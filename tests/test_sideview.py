@@ -426,8 +426,7 @@ class ClientTests(unittest.TestCase):
             self.game._update_controls(10.0)
             self.game._update_controls(10.02)
             self.game.process_key(ord("s"))
-        self.assertEqual(self.messages, [{"input_seq": 1, "move": 1, "jump": True},
-                                        {"gather": True, "dx": 0, "dy": 1}])
+        self.assertEqual(self.messages, [{"input_seq": 1, "move": 1, "jump": True}])
         self.game._update_controls(10.3)
         self.assertEqual(self.messages[-1]["move"], 0)
 
@@ -442,12 +441,12 @@ class ClientTests(unittest.TestCase):
                 terrain.append(self.game.game_map.get_tile(160, 40))
         self.assertEqual(terrain[0], terrain[1])
 
-    def test_build_mode_aims_then_places_selected_material(self):
-        self.game.process_key(ord("b"))
-        self.game.process_key(ord("s"))
+    def test_selected_block_places_without_switching_build_modes(self):
+        client.game_state["players"]["p"]["inventory"] = {"wood": 1, "stone": 2}
+        self.game.build_direction = (1, 0)
         self.game.process_key(ord("2"))
         self.game.process_key(10)
-        self.assertEqual(self.messages, [{"stop": True}, {"build": True, "x": 200, "y": 22, "material": "stone"}])
+        self.assertEqual(self.messages, [{"build": True, "x": 201, "y": 21, "material": "stone"}])
 
     def test_mined_tiles_are_rendered_as_air_and_do_not_cover_player(self):
         player = client.game_state["players"]["p"]
@@ -522,7 +521,7 @@ class ClientTests(unittest.TestCase):
             "ttx.terminal.time.sleep"
         ), patch.object(client.curses, "endwin", side_effect=AssertionError("terminal mode switch")):
             self.game._fight_adjacent_enemy()
-        self.assertEqual(self.messages, [{"stop": True}, {"battle": "start", "enemy_id": "e"},
+        self.assertEqual([message for message in self.messages if "card_progress" not in message], [{"stop": True}, {"battle": "start", "enemy_id": "e"},
                                          {"pause": True}, {"pause": False}, {"battle": "end"}])
         self.assertNotIn("battle_enemy", player)
         self.assertIsNotNone(self.game.card_hp)

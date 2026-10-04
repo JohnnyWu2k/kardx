@@ -9,6 +9,9 @@ from collections import deque
 from copy import deepcopy
 
 from ttx.world.map import InfiniteGameMap
+from ttx.world.crafting import TILES, TOOLS, best_tool, craft
+from ttx.world.inventory import BLOCKS, sync_slots
+from ttx.world.storage import write_world
 from ttx.world.physics import INPUT_STEP, grounded, jump, release_motion, request_jump, step_actor, stop_motion
 from ttx.net.prediction import apply_input
 from ttx.net.protocol import COMMAND_LIMIT, JsonLineReader, ProtocolError, valid_command
@@ -56,6 +59,9 @@ class ServerHandle:
     def port(self):
         return self.runtime.port
 
+    def save(self):
+        return self.runtime.save()
+
     def stop(self):
         self.runtime.stop()
         self.thread.join()
@@ -65,6 +71,7 @@ def build_state(client_id: str | None = None) -> dict:
     with state_lock:
         return deepcopy({
             "client_id": client_id,
+            "world_name": server_runtime.document["name"] if server_runtime and server_runtime.document else "World",
             "players": players,
             "enemies": enemies,
             "objects": objects,
@@ -373,6 +380,8 @@ def handle_client(conn: socket.socket, addr):
             "move": 0,
             "input_seq": 0,
         }
+        if server_runtime and server_runtime.host_client not in players and addr[0] in ("127.0.0.1", "::1"):
+            server_runtime.host_client = client_id
         connections[conn] = client_id
         snapshot_writers[conn] = writer
     reader = JsonLineReader(COMMAND_LIMIT)
@@ -402,6 +411,9 @@ def handle_client(conn: socket.socket, addr):
             connections.pop(conn, None)
             snapshot_writers.pop(conn, None)
             _end_battle(client_id)
+            if server_runtime is not None:
+                server_runtime.remember(client_id)
+                server_runtime.identities.pop(client_id, None)
             players.pop(client_id, None)
             input_queues.pop(client_id, None)
         writer.close()
@@ -433,16 +445,42 @@ def process_message(client_id: str, message: dict):
     with state_lock:
         if client_id not in players or world_map is None:
             return
+        if "hello" in message:
+            if server_runtime:
+                server_runtime.identify(client_id, message["hello"])
+            return
+        if message.get("save"):
+            if server_runtime and server_runtime.host_client == client_id:
+                try:
+                    server_runtime.save()
+                    players[client_id]["notice"] = "World saved"
+                except OSError as exc:
+                    players[client_id]["notice"] = f"Save failed: {exc}"
+            else:
+                players[client_id]["notice"] = "Only the host can save"
+            return
+        if "card_progress" in message:
+            players[client_id]["card_progress"] = message["card_progress"]
+            return
+        if "inventory_order" in message:
+            player = players[client_id]
+            player["inventory_order"] = sync_slots(message["inventory_order"], player.get("inventory", {}))
+            return
         if "pause" in message and type(message["pause"]) is bool:
             _handle_pause(client_id, message["pause"])
         elif message.get("battle") == "end":
             _end_battle(client_id)
-        elif players[client_id].get("paused") or players[client_id].get("pause_requested"):
+        elif (players[client_id].get("paused") or players[client_id].get("pause_requested")) and not message.get("craft"):
             return
         elif message.get("battle"):
             _handle_battle(client_id, message)
         elif players[client_id].get("battle_enemy") and not message.get("attack"):
             return
+        elif message.get("craft"):
+            player = players[client_id]
+            near = any(tile.get("char") == "W" and abs(tile["x"] - player["x"]) + abs(tile["y"] - player["y"]) <= 2
+                       for tile in custom_tiles.values())
+            player["notice"] = craft(player.setdefault("inventory", {}), message["craft"], near)
         elif message.get("build"):
             _handle_build(client_id, message)
         elif message.get("attack"):
@@ -469,7 +507,7 @@ def _handle_build(client_id: str, message: dict):
     y = int(message.get("y", 0))
     material = str(message.get("material", "wood"))
     inventory = player.setdefault("inventory", {})
-    blocks = {"wood": "|", "stone": "#", "dirt": ":", "sand": "%"}
+    blocks = BLOCKS
     if material not in blocks or int(inventory.get(material, 0)) <= 0:
         return
     block = blocks[material]
@@ -508,7 +546,7 @@ def _handle_gather(client_id: str, message: dict | None = None):
     dx, dy = int(message.get("dx", player.get("facing", 1))), int(message.get("dy", 0))
     if abs(dx) + abs(dy) != 1:
         return
-    positions = [(px, py), (px + dx, py + dy)]
+    positions = [(px + dx, py + dy)]
     found = object_at(objects, positions)
     if found:
         object_id, obj = found
@@ -521,11 +559,21 @@ def _handle_gather(client_id: str, message: dict | None = None):
         tile = _tile_at(x, y)
         if tile not in InfiniteGameMap.SOLID_TILES:
             return
-        drop = {"*": "crystal_shard", "o": "stone", "|": "wood", ":": "dirt", '"': "dirt", "%": "sand"}.get(tile, "stone")
+        drop, required = TILES[tile]
+        inventory = player.get("inventory", {})
+        # Older clients omit tool; new clients explicitly send None for bare hands.
+        tool = message.get("tool", best_tool(inventory))
+        if inventory.get(tool, 0) <= 0:
+            tool = None
+        if TOOLS.get(tool, 0) < required:
+            needed = {1: "wood_pickaxe", 2: "stone_pickaxe", 3: "iron_pickaxe"}[required]
+            player["notice"] = f"Need {needed} or better"
+            return
         custom_tiles[f"{x},{y}"] = {"x": x, "y": y, "char": ".", "block": "."}
         terrain_revision += 1
     inventory = player.setdefault("inventory", {})
     inventory[drop] = int(inventory.get(drop, 0)) + 1
+    player["notice"] = f"Collected {drop} +1"
 
 
 def _handle_move(client_id: str, dx: int, dy: int = 0):
@@ -627,7 +675,15 @@ def _grant_enemy_rewards(player: dict, enemy: dict):
 class _ServerRuntime:
     """Own the listener and every worker until shutdown has completed."""
 
-    def __init__(self, width: int, height: int, verbose: bool, host: str, port: int):
+    def __init__(self, width: int, height: int, verbose: bool, host: str, port: int, document=None):
+        self.document = document
+        self.initialized = False
+        self.profiles = deepcopy(document.get("profiles", {})) if document else {}
+        self.identities = {}
+        self.host_client = None
+        self.discovery_thread = None
+        self.last_save = time.monotonic()
+        self.save_lock = threading.Lock()
         self.width, self.height, self.verbose = width, height, verbose
         self.host, self.port = host, port
         self.ready = threading.Event()
@@ -637,6 +693,58 @@ class _ServerRuntime:
         self.handlers = set()
         self.lock = threading.Lock()
         self.thread = threading.Thread(target=self._run, name="ttx-server", daemon=False)
+
+    def identify(self, client_id, identity):
+        if client_id in self.identities or identity in self.identities.values():
+            return
+        self.identities[client_id] = identity
+        players[client_id]["profile_ready"] = True
+        saved = self.profiles.get(identity)
+        if saved:
+            restored = deepcopy(saved)
+            restored.update(input_seq=0, input_received_seq=0, profile_ready=True)
+            stop_motion(restored)
+            if _terrain_blocked(restored["x"], restored["y"]) or _is_occupied(restored["x"], restored["y"]):
+                restored["x"], restored["y"] = players[client_id]["x"], players[client_id]["y"]
+            players[client_id] = restored
+
+    def remember(self, client_id):
+        identity = self.identities.get(client_id)
+        if identity and client_id in players:
+            actor = deepcopy(players[client_id])
+            for key in ("paused", "pause_requested", "battle_enemy", "move_expires_tick", "notice"):
+                actor.pop(key, None)
+            stop_motion(actor)
+            self.profiles[identity] = actor
+
+    def save(self):
+        if not self.document or not self.initialized:
+            return None
+        with state_lock, self.save_lock:
+            with state_lock:
+                for client_id in players:
+                    self.remember(client_id)
+                state = build_state()
+                state.pop("players", None)
+                state.pop("client_id", None)
+                for enemy in state["enemies"].values():
+                    enemy.pop("engaged_by", None)
+                    stop_motion(enemy)
+                document = {**self.document, "state": state, "profiles": deepcopy(self.profiles)}
+            return write_world(document)
+
+    def restore(self):
+        global map_seed, world_map, terrain_revision
+        if not self.document or "state" not in self.document:
+            return
+        state = self.document["state"]
+        with state_lock:
+            map_seed = state["map_seed"]
+            world_map = InfiniteGameMap(state["world_width"], seed=map_seed, height=state["world_height"])
+            for target, key in ((enemies, "enemies"), (objects, "objects"), (custom_tiles, "custom_tiles")):
+                target.clear()
+                target.update(deepcopy(state[key]))
+            terrain_revision = state.get("terrain_revision", 0)
 
     def stop(self):
         with server_lifecycle_lock:
@@ -681,11 +789,28 @@ class _ServerRuntime:
             listener.listen(5)
             listener.settimeout(0.2)
             reset_game_state(self.width, self.height)
+            self.restore()
+            self.initialized = True
+            if self.document:
+                self.save()
+            from ttx.net.discovery import advertise
+            self.discovery_thread = threading.Thread(target=advertise, args=(server_stop_event,
+                lambda: {"name": self.document["name"] if self.document else "Kard-X World", "port": self.port}),
+                name="ttx-discovery", daemon=False)
+            self.discovery_thread.start()
             simulation = threading.Thread(target=self._simulate, name="ttx-simulation", daemon=False)
             simulation.start()
             self.ready.set()
             _log(f"[SERVER] Listening on port {self.port} with map seed: {map_seed}")
             while not server_stop_event.is_set():
+                if self.document and time.monotonic() - self.last_save >= 30:
+                    try:
+                        self.save()
+                    except (OSError, ValueError) as exc:
+                        with state_lock:
+                            for actor in players.values():
+                                actor["notice"] = f"Autosave failed: {exc}"
+                    self.last_save = time.monotonic()
                 try:
                     connection, address = listener.accept()
                 except socket.timeout:
@@ -722,6 +847,12 @@ class _ServerRuntime:
                 handlers = list(self.handlers)
             for handler in handlers:
                 handler.join()
+            if self.discovery_thread:
+                self.discovery_thread.join()
+            try:
+                self.save()
+            except (OSError, ValueError) as exc:
+                self.error = exc
             with server_lifecycle_lock:
                 server_socket = None
                 if server_runtime is self:
@@ -746,12 +877,12 @@ def server_main(world_width: int, world_height: int, verbose: bool = True):
 
 
 def start_server(world_width: int, world_height: int, verbose: bool = True,
-                 *, host: str = HOST, port: int = PORT) -> ServerHandle:
+                 *, host: str = HOST, port: int = PORT, document=None) -> ServerHandle:
     global server_runtime
     with server_lifecycle_lock:
         if server_runtime is not None:
             raise RuntimeError("A TTX server is already running in this process.")
-        runtime = _ServerRuntime(world_width, world_height, verbose, host, port)
+        runtime = _ServerRuntime(world_width, world_height, verbose, host, port, document)
         server_runtime = runtime
         server_stop_event.clear()
         try:

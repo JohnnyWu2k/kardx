@@ -21,6 +21,8 @@ class PauseMenuController:
             self.view.display(self.options, self.selected_index, term_width, term_height)
             key = get_key()
 
+            if isinstance(key, tuple) and key[0] == "pause":
+                return "resume" if key[1] == 0 else "main_menu"
             if key == KEY_UP:
                 self.selected_index = (self.selected_index - 1) % len(self.options)
             elif key == KEY_DOWN:

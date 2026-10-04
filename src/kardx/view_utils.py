@@ -16,6 +16,13 @@ _last_size = None
 _last_stream = None
 
 
+def set_mouse_targets(targets):
+    """Register (left, top, right, bottom, action) for the visible scene."""
+    terminal = _terminal.get()
+    if terminal is not None:
+        terminal.mouse_targets = targets
+
+
 @contextmanager
 def use_terminal(terminal):
     token = _terminal.set(terminal)
